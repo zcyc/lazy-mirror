@@ -1,7 +1,13 @@
-# lirror
+# lirror [WIP]
 一键设置开发环境镜像
 
-## help
+## example
+```bash
+lirror set go
+lirror unset go
+```
+
+## usage
 ```
 A mirror setting cli for lazy
 
