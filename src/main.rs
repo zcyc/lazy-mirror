@@ -29,21 +29,10 @@ fn all(action: i32) {
 fn npm(commands: &Commands) {
     match commands {
         Commands::Set { name: _ } => {
-            let output = Command::new("sh")
-                .args([
-                    "-c",
-                    "npm config set registry https://registry.npmmirror.com/",
-                ])
-                .output()
-                .expect("failed to execute");
-            println!("{:?}", output);
+            lm::npm::set();
         }
         Commands::Unset { name: _ } => {
-            let output = Command::new("sh")
-                .args(["-c", "npm config set registry https://registry.npmjs.org/"])
-                .output()
-                .expect("failed to execute");
-            println!("{:?}", output);
+            lm::npm::unset();
         }
     };
 }
