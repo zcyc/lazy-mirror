@@ -107,13 +107,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "lazy-mirror"
-version = "0.1.0"
-dependencies = [
- "clap",
-]
-
-[[package]]
 name = "libc"
 version = "0.2.139"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -124,6 +117,13 @@ name = "linux-raw-sys"
 version = "0.1.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f051f77a7c8e6957c0696eac88f26b0117e54f52d3fc682ab19397a8812846a4"
+
+[[package]]
+name = "lm"
+version = "0.1.0"
+dependencies = [
+ "clap",
+]
 
 [[package]]
 name = "once_cell"
