@@ -4,14 +4,14 @@ use clap::{Parser, Subcommand};
 
 /// A fictional versioning CLI
 #[derive(Debug, Parser)] // requires `derive` feature
-#[command(name = "lirror")]
+#[command(name = "lm")]
 #[command(about = "A mirror setting cli for lazy", long_about = None)]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
 }
 
-#[derive(Debug, Subcommand)]
+#[derive(Debug, Subcommand, Clone)]
 enum Commands {
     #[command(arg_required_else_help = true)]
     Set {
@@ -23,26 +23,29 @@ enum Commands {
 }
 
 fn all(action: i32) {
-    println!("WIP")
+    todo!()
 }
 
-fn npm(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "npm config set registry https://registry.npmmirror.com/",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "npm config set registry https://registry.npmjs.org/"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn npm(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            let output = Command::new("sh")
+                .args([
+                    "-c",
+                    "npm config set registry https://registry.npmmirror.com/",
+                ])
+                .output()
+                .expect("failed to execute");
+            println!("{:?}", output);
+        }
+        Commands::Unset { name: _ } => {
+            let output = Command::new("sh")
+                .args(["-c", "npm config set registry https://registry.npmjs.org/"])
+                .output()
+                .expect("failed to execute");
+            println!("{:?}", output);
+        }
+    };
 }
 
 fn pnpm(action: i32) {
@@ -205,14 +208,14 @@ export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
 fn main() {
     let args = Cli::parse();
 
-    match args.command {
+    match args.command.clone() {
         Commands::Set { name } => match name.as_str() {
             "all" => all(1),
             // node
-            "npm" => npm(1),
+            "npm" => npm(&args.command),
             "pnpm" => pnpm(1),
             "yarn" => yarn(1),
-            "node" => npm(1),
+            "node" => npm(&args.command),
             // go
             "go" => go(1),
             // python
@@ -240,10 +243,10 @@ fn main() {
         Commands::Unset { name } => match name.as_str() {
             "all" => all(2),
             // node
-            "npm" => npm(2),
+            "npm" => npm(&args.command),
             "pnpm" => pnpm(2),
             "yarn" => yarn(2),
-            "node" => npm(2),
+            "node" => npm(&args.command),
             // go
             "go" => go(2),
             // python
