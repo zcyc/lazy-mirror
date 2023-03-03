@@ -1,17 +1,19 @@
-# lirror [WIP]
+# lm
+
 一键设置开发环境镜像
 
 ## usage
+
 ```bash
-lirror set go
-lirror unset go
+lm set go
+lm unset go
 ```
 
 ## help
 ```
 A mirror setting cli for lazy
 
-Usage: lazy-mirror <COMMAND>
+Usage: lm <COMMAND>
 
 Commands:
   set    
