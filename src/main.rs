@@ -11,7 +11,7 @@ struct Cli {
     command: Commands,
 }
 
-#[derive(Debug, Subcommand, Clone)]
+#[derive(Debug, Subcommand)]
 enum Commands {
     #[command(arg_required_else_help = true)]
     Set {
@@ -208,7 +208,7 @@ export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
 fn main() {
     let args = Cli::parse();
 
-    match args.command.clone() {
+    match &args.command {
         Commands::Set { name } => match name.as_str() {
             "all" => all(1),
             // node
