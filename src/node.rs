@@ -1,5 +1,7 @@
+use std::process::Command;
+
 pub fn set(name: &String) {
-    let output = std::process::Command::new("sh")
+    let output = Command::new("sh")
         .args([
             "-c",
             format!(
@@ -15,7 +17,7 @@ pub fn set(name: &String) {
 }
 
 pub fn unset(name: &String) {
-    let output = std::process::Command::new("sh")
+    let output = Command::new("sh")
         .args([
             "-c",
             format!(

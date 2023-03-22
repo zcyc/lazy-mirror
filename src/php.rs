@@ -1,5 +1,7 @@
+use std::process::Command;
+
 pub fn set() {
-    let output = std::process::Command::new("sh")
+    let output = Command::new("sh")
         .args([
             "-c",
             "composer config -g repo.packagist composer https://mirrors.aliyun.com/composer/",
@@ -10,7 +12,7 @@ pub fn set() {
 }
 
 pub fn unset() {
-    let output = std::process::Command::new("sh")
+    let output = Command::new("sh")
         .args(["-c", "composer config -g --unset repos.packagist"])
         .output()
         .expect("failed to execute");
