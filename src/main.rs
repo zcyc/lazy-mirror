@@ -1,4 +1,4 @@
-use std::process::Command;
+use std::{process::Command, string};
 
 use clap::{Parser, Subcommand};
 
@@ -70,42 +70,15 @@ fn go(commands: &Commands) {
     };
 }
 
-fn pip(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "pip config unset global.index-url"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
-}
-
-fn pip3(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "pip3 config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "pip3 config unset global.index-url"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn pip(name: &String, commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::pip::set(name);
+        }
+        Commands::Unset { name: _ } => {
+            lm::pip::unset(name);
+        }
+    };
 }
 
 fn composer(action: i32) {
@@ -187,9 +160,9 @@ fn main() {
             // go
             "go" => go(&args.command),
             // python
-            "pip" => pip(1),
-            "pip3" => pip3(1),
-            "python" => pip(1),
+            "pip" => pip(name, &args.command),
+            "pip3" => pip(name, &args.command),
+            "python" => pip(&String::from("pip3"), &args.command),
             // php
             "composer" => composer(1),
             "php" => composer(1),
@@ -212,14 +185,15 @@ fn main() {
             "all" => all(2),
             // node
             "npm" => npm(&args.command),
-            "pnpm" => pnpm(2),
-            "yarn" => yarn(2),
+            "pnpm" => pnpm(&args.command),
+            "yarn" => yarn(&args.command),
             "node" => npm(&args.command),
             // go
-            "go" => go(2),
+            "go" => go(&args.command),
             // python
-            "pip" => pip(2),
-            "python" => pip(2),
+            "pip" => pip(name, &args.command),
+            "pip3" => pip(name, &args.command),
+            "python" => pip(&String::from("pip"), &args.command),
             // php
             "composer" => composer(2),
             "php" => composer(2),
