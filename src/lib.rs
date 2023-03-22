@@ -1,4 +1,5 @@
 pub mod composer;
+pub mod gem;
 pub mod go;
 pub mod npm;
 pub mod pip;

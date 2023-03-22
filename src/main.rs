@@ -92,26 +92,15 @@ fn composer(commands: &Commands) {
     };
 }
 
-fn gem(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "gem sources --add https://mirrors.tuna.tsinghua.edu.cn/rubygems/ --remove https://rubygems.org/",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-        .args([
-            "-c",
-            "gem sources --add https://rubygems.org/ --remove https://mirrors.tuna.tsinghua.edu.cn/rubygems/",
-        ])
-        .output()
-        .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn gem(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::gem::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::gem::unset();
+        }
+    };
 }
 
 fn maven(action: i32) {
@@ -159,10 +148,10 @@ fn main() {
             "composer" => composer(&args.command),
             "php" => composer(&args.command),
             // ruby
-            "gem" => gem(1),
-            "ruby" => gem(1),
-            "gems" => gem(1),
-            "rubygems" => gem(1),
+            "gem" => gem(&args.command),
+            "ruby" => gem(&args.command),
+            "gems" => gem(&args.command),
+            "rubygems" => gem(&args.command),
             // java
             "maven" => maven(1),
             "gradle" => gradle(1),
@@ -190,10 +179,10 @@ fn main() {
             "composer" => composer(&args.command),
             "php" => composer(&args.command),
             // ruby
-            "gem" => gem(2),
-            "ruby" => gem(2),
-            "gems" => gem(2),
-            "rubygems" => gem(2),
+            "gem" => gem(&args.command),
+            "ruby" => gem(&args.command),
+            "gems" => gem(&args.command),
+            "rubygems" => gem(&args.command),
             // java
             "maven" => maven(2),
             "gradle" => gradle(2),
