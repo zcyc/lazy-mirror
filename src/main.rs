@@ -59,20 +59,15 @@ fn yarn(commands: &Commands) {
     };
 }
 
-fn go(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args(["-c", "go env -w GOPROXY=https://goproxy.cn,direct"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "go env -u GOPROXY"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn go(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::go::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::go::unset();
+        }
+    };
 }
 
 fn pip(action: i32) {
@@ -190,7 +185,7 @@ fn main() {
             "yarn" => yarn(&args.command),
             "node" => npm(&args.command),
             // go
-            "go" => go(1),
+            "go" => go(&args.command),
             // python
             "pip" => pip(1),
             "pip3" => pip3(1),
