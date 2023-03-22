@@ -1,7 +1,5 @@
-pub mod composer;
-pub mod gem;
+pub mod php;
+pub mod ruby;
 pub mod go;
-pub mod npm;
-pub mod pip;
-pub mod pnpm;
-pub mod yarn;
+pub mod node;
+pub mod python;

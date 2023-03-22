@@ -26,35 +26,13 @@ fn all(action: i32) {
     todo!()
 }
 
-fn npm(commands: &Commands) {
+fn node(name: &String, commands: &Commands) {
     match commands {
         Commands::Set { name: _ } => {
-            lm::npm::set();
+            lm::node::set(name);
         }
         Commands::Unset { name: _ } => {
-            lm::npm::unset();
-        }
-    };
-}
-
-fn pnpm(commands: &Commands) {
-    match commands {
-        Commands::Set { name: _ } => {
-            lm::pnpm::set();
-        }
-        Commands::Unset { name: _ } => {
-            lm::pnpm::unset();
-        }
-    };
-}
-
-fn yarn(commands: &Commands) {
-    match commands {
-        Commands::Set { name: _ } => {
-            lm::yarn::set();
-        }
-        Commands::Unset { name: _ } => {
-            lm::yarn::unset();
+            lm::node::unset(name);
         }
     };
 }
@@ -70,35 +48,35 @@ fn go(commands: &Commands) {
     };
 }
 
-fn pip(name: &String, commands: &Commands) {
+fn python(name: &String, commands: &Commands) {
     match commands {
         Commands::Set { name: _ } => {
-            lm::pip::set(name);
+            lm::python::set(name);
         }
         Commands::Unset { name: _ } => {
-            lm::pip::unset(name);
+            lm::python::unset(name);
         }
     };
 }
 
-fn composer(commands: &Commands) {
+fn php(commands: &Commands) {
     match commands {
         Commands::Set { name: _ } => {
-            lm::composer::set();
+            lm::php::set();
         }
         Commands::Unset { name: _ } => {
-            lm::composer::unset();
+            lm::php::unset();
         }
     };
 }
 
-fn gem(commands: &Commands) {
+fn ruby(commands: &Commands) {
     match commands {
         Commands::Set { name: _ } => {
-            lm::gem::set();
+            lm::ruby::set();
         }
         Commands::Unset { name: _ } => {
-            lm::gem::unset();
+            lm::ruby::unset();
         }
     };
 }
@@ -134,24 +112,24 @@ fn main() {
         Commands::Set { name } => match name.as_str() {
             "all" => all(1),
             // node
-            "npm" => npm(&args.command),
-            "pnpm" => pnpm(&args.command),
-            "yarn" => yarn(&args.command),
-            "node" => npm(&args.command),
+            "npm" => node(name, &args.command),
+            "pnpm" => node(name, &args.command),
+            "yarn" => node(name, &args.command),
+            "node" => node(&String::from("npm"), &args.command),
             // go
             "go" => go(&args.command),
             // python
-            "pip" => pip(name, &args.command),
-            "pip3" => pip(name, &args.command),
-            "python" => pip(&String::from("pip3"), &args.command),
+            "pip" => python(name, &args.command),
+            "pip3" => python(name, &args.command),
+            "python" => python(&String::from("pip3"), &args.command),
             // php
-            "composer" => composer(&args.command),
-            "php" => composer(&args.command),
+            "composer" => php(&args.command),
+            "php" => php(&args.command),
             // ruby
-            "gem" => gem(&args.command),
-            "ruby" => gem(&args.command),
-            "gems" => gem(&args.command),
-            "rubygems" => gem(&args.command),
+            "gem" => ruby(&args.command),
+            "ruby" => ruby(&args.command),
+            "gems" => ruby(&args.command),
+            "rubygems" => ruby(&args.command),
             // java
             "maven" => maven(1),
             "gradle" => gradle(1),
@@ -165,24 +143,24 @@ fn main() {
         Commands::Unset { name } => match name.as_str() {
             "all" => all(2),
             // node
-            "npm" => npm(&args.command),
-            "pnpm" => pnpm(&args.command),
-            "yarn" => yarn(&args.command),
-            "node" => npm(&args.command),
+            "npm" => node(name, &args.command),
+            "pnpm" => node(name, &args.command),
+            "yarn" => node(name, &args.command),
+            "node" => node(&String::from("npm"), &args.command),
             // go
             "go" => go(&args.command),
             // python
-            "pip" => pip(name, &args.command),
-            "pip3" => pip(name, &args.command),
-            "python" => pip(&String::from("pip3"), &args.command),
+            "pip" => python(name, &args.command),
+            "pip3" => python(name, &args.command),
+            "python" => python(&String::from("pip3"), &args.command),
             // php
-            "composer" => composer(&args.command),
-            "php" => composer(&args.command),
+            "composer" => php(&args.command),
+            "php" => php(&args.command),
             // ruby
-            "gem" => gem(&args.command),
-            "ruby" => gem(&args.command),
-            "gems" => gem(&args.command),
-            "rubygems" => gem(&args.command),
+            "gem" => ruby(&args.command),
+            "ruby" => ruby(&args.command),
+            "gems" => ruby(&args.command),
+            "rubygems" => ruby(&args.command),
             // java
             "maven" => maven(2),
             "gradle" => gradle(2),
