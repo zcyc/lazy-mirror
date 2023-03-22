@@ -81,23 +81,15 @@ fn pip(name: &String, commands: &Commands) {
     };
 }
 
-fn composer(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "composer config -g repo.packagist composer https://mirrors.aliyun.com/composer/",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "composer config -g --unset repos.packagist"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn composer(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::composer::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::composer::unset();
+        }
+    };
 }
 
 fn gem(action: i32) {
@@ -164,8 +156,8 @@ fn main() {
             "pip3" => pip(name, &args.command),
             "python" => pip(&String::from("pip3"), &args.command),
             // php
-            "composer" => composer(1),
-            "php" => composer(1),
+            "composer" => composer(&args.command),
+            "php" => composer(&args.command),
             // ruby
             "gem" => gem(1),
             "ruby" => gem(1),
@@ -193,10 +185,10 @@ fn main() {
             // python
             "pip" => pip(name, &args.command),
             "pip3" => pip(name, &args.command),
-            "python" => pip(&String::from("pip"), &args.command),
+            "python" => pip(&String::from("pip3"), &args.command),
             // php
-            "composer" => composer(2),
-            "php" => composer(2),
+            "composer" => composer(&args.command),
+            "php" => composer(&args.command),
             // ruby
             "gem" => gem(2),
             "ruby" => gem(2),
