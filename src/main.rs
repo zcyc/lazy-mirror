@@ -37,23 +37,15 @@ fn npm(commands: &Commands) {
     };
 }
 
-fn pnpm(action: i32) {
-    if action == 1 {
-        let output = Command::new("sh")
-            .args([
-                "-c",
-                "pnpm config set registry https://registry.npmmirror.com/",
-            ])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    } else if action == 2 {
-        let output = Command::new("sh")
-            .args(["-c", "pnpm config set registry https://registry.npmjs.org/"])
-            .output()
-            .expect("failed to execute");
-        println!("{:?}", output);
-    }
+fn pnpm(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::pnpm::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::pnpm::unset();
+        }
+    };
 }
 
 fn yarn(action: i32) {
@@ -202,7 +194,7 @@ fn main() {
             "all" => all(1),
             // node
             "npm" => npm(&args.command),
-            "pnpm" => pnpm(1),
+            "pnpm" => npm(&args.command),
             "yarn" => yarn(1),
             "node" => npm(&args.command),
             // go
