@@ -89,20 +89,15 @@ fn gradle(action: i32) {
     todo!()
 }
 
-fn cargo(action: i32) {
-    let zshrc = r#"# set by lirror begin #
-export RUSTUP_DIST_SERVER="https://rsproxy.cn"
-export RUSTUP_UPDATE_ROOT="https://rsproxy.cn/rustup"
-# set by lirror end #"#;
-    // let new_zshrc = zshrc.replace(zshrc, "new string");
-    // println!("new_zshrc: {new_zshrc}");
-    let cmd = format!("echo '{zshrc}' >> ~/kk");
-    println!("cmd: {cmd}");
-    let output = Command::new("sh")
-        .args(["-c", &cmd])
-        .output()
-        .expect("set cargo error");
-    println!("output: {output:?}");
+fn rust(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::rust::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::rust::unset();
+        }
+    };
 }
 
 fn main() {
@@ -135,8 +130,8 @@ fn main() {
             "gradle" => gradle(1),
             "java" => maven(1),
             // rust
-            "cargo" => cargo(1),
-            "rust" => cargo(1),
+            "cargo" => rust(&args.command),
+            "rust" => rust(&args.command),
             // other
             _ => println!("not support it"),
         },
@@ -166,8 +161,8 @@ fn main() {
             "gradle" => gradle(2),
             "java" => maven(2),
             // rust
-            "cargo" => cargo(2),
-            "rust" => cargo(2),
+            "cargo" => rust(&args.command),
+            "rust" => rust(&args.command),
             // other
             _ => println!("not support it"),
         },
