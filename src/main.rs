@@ -126,6 +126,17 @@ fn rust(commands: &Commands) {
     };
 }
 
+fn brew(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::brew::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::brew::unset();
+        }
+    };
+}
+
 fn main() {
     let args = Cli::parse();
 
@@ -189,6 +200,8 @@ fn main() {
             // rust
             "cargo" => rust(&args.command),
             "rust" => rust(&args.command),
+            // brew
+            "brew" => brew(&args.command),
             // other
             _ => println!("not support it"),
         },
