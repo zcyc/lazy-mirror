@@ -81,11 +81,18 @@ fn ruby(commands: &Commands) {
     };
 }
 
-fn maven(action: i32) {
-    todo!()
+fn java(commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::java::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::java::unset();
+        }
+    };
 }
 
-fn gradle(action: i32) {
+fn gradle(commands: &Commands) {
     todo!()
 }
 
@@ -126,9 +133,9 @@ fn main() {
             "gems" => ruby(&args.command),
             "rubygems" => ruby(&args.command),
             // java
-            "maven" => maven(1),
-            "gradle" => gradle(1),
-            "java" => maven(1),
+            "maven" => java(&args.command),
+            "gradle" => gradle(&args.command),
+            "java" => java(&args.command),
             // rust
             "cargo" => rust(&args.command),
             "rust" => rust(&args.command),
@@ -157,9 +164,9 @@ fn main() {
             "gems" => ruby(&args.command),
             "rubygems" => ruby(&args.command),
             // java
-            "maven" => maven(2),
-            "gradle" => gradle(2),
-            "java" => maven(2),
+            "maven" => java(&args.command),
+            "gradle" => gradle(&args.command),
+            "java" => java(&args.command),
             // rust
             "cargo" => rust(&args.command),
             "rust" => rust(&args.command),
