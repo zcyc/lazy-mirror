@@ -81,19 +81,38 @@ fn ruby(commands: &Commands) {
     };
 }
 
-fn java(commands: &Commands) {
+fn java(name: &str, commands: &Commands) {
+    match name {
+        "maven" => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::java::maven_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::java::maven_unset();
+                }
+            };
+        }
+        "gradle" => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::java::gradle_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::java::gradle_unset();
+                }
+            };
+        }
+        _ => {}
+    }
     match commands {
         Commands::Set { name: _ } => {
-            lm::java::set();
+            lm::java::maven_set();
         }
         Commands::Unset { name: _ } => {
-            lm::java::unset();
+            lm::java::maven_unset();
         }
     };
-}
-
-fn gradle(commands: &Commands) {
-    todo!()
 }
 
 fn rust(commands: &Commands) {
@@ -133,9 +152,9 @@ fn main() {
             "gems" => ruby(&args.command),
             "rubygems" => ruby(&args.command),
             // java
-            "maven" => java(&args.command),
-            "gradle" => gradle(&args.command),
-            "java" => java(&args.command),
+            "maven" => java(name, &args.command),
+            "gradle" => java(name, &args.command),
+            "java" => java(&String::from("maven"), &args.command),
             // rust
             "cargo" => rust(&args.command),
             "rust" => rust(&args.command),
@@ -164,9 +183,9 @@ fn main() {
             "gems" => ruby(&args.command),
             "rubygems" => ruby(&args.command),
             // java
-            "maven" => java(&args.command),
-            "gradle" => gradle(&args.command),
-            "java" => java(&args.command),
+            "maven" => java(name, &args.command),
+            "gradle" => java(name, &args.command),
+            "java" => java(&String::from("maven"), &args.command),
             // rust
             "cargo" => rust(&args.command),
             "rust" => rust(&args.command),

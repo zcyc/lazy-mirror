@@ -4,7 +4,7 @@ use std::{
     path::Path,
 };
 
-pub fn set() {
+pub fn maven_set() {
     // 获取 Maven 配置文件路径
     let home_dir = match dirs::home_dir() {
         Some(path) => path,
@@ -74,7 +74,7 @@ pub fn set() {
     println!("Successfully set the Maven mirror.");
 }
 
-pub fn unset() {
+pub fn maven_unset() {
     // 获取 Maven 配置文件路径
     let home_dir = match dirs::home_dir() {
         Some(path) => path,
@@ -122,4 +122,110 @@ pub fn unset() {
     }
 
     println!("Successfully removed the Maven mirror.");
+}
+
+pub fn gradle_set() {
+    // 获取 Gradle 配置文件路径
+    let home_dir = match dirs::home_dir() {
+        Some(path) => path,
+        None => {
+            eprintln!("Error: could not find home directory.");
+            return;
+        }
+    };
+    let gradle_config_path = home_dir.join(".gradle").join("init.gradle");
+
+    // 如果配置文件不存在，则创建一个新的文件
+    if !Path::new(&gradle_config_path).exists() {
+        match fs::File::create(&gradle_config_path) {
+            Ok(_) => (),
+            Err(e) => {
+                eprintln!("Error: could not create Gradle configuration file: {}", e);
+                return;
+            }
+        }
+    }
+
+    // 读取配置文件内容
+    let file = fs::File::open(&gradle_config_path).unwrap();
+    let reader = BufReader::new(file);
+    let lines: Vec<String> = reader.lines().map(|l| l.unwrap()).collect();
+
+    // 查找 repositories 部分，并添加新的 mirror
+    let mut new_lines: Vec<String> = Vec::new();
+    let mut in_repositories = false;
+    let mut added_mirror = false;
+    for line in lines {
+        if line.contains("repositories {") {
+            in_repositories = true;
+            new_lines.push(line.clone());
+            new_lines.push("    maven {".to_string());
+            new_lines.push(
+                "        url \"http://maven.aliyun.com/nexus/content/groups/public/\"".to_string(),
+            );
+            new_lines.push("    }".to_string());
+        } else if in_repositories && !added_mirror && line.contains("mavenCentral()") {
+            added_mirror = true;
+            new_lines.push(line);
+        } else if !added_mirror {
+            new_lines.push(line);
+        }
+    }
+
+    // 将新的配置写入文件
+    let mut file = fs::File::create(&gradle_config_path).unwrap();
+    for line in new_lines {
+        writeln!(file, "{}", line).unwrap();
+    }
+
+    println!("Successfully set the Gradle mirror.");
+}
+
+pub fn gradle_unset() {
+    // 获取 Gradle 配置文件路径
+    let home_dir = match dirs::home_dir() {
+        Some(path) => path,
+        None => {
+            eprintln!("Error: could not find home directory.");
+            return;
+        }
+    };
+    let gradle_config_path = home_dir.join(".gradle").join("gradle.properties");
+
+    // 如果配置文件不存在，则退出
+    if !Path::new(&gradle_config_path).exists() {
+        eprintln!("Error: could not find Gradle configuration file.");
+        return;
+    }
+
+    // 读取配置文件内容
+    let file = fs::File::open(&gradle_config_path).unwrap();
+    let reader = BufReader::new(file);
+    let lines: Vec<String> = reader.lines().map(|l| l.unwrap()).collect();
+
+    // 查找 mirrors 部分，并删除对应的 mirror
+    let mut new_lines: Vec<String> = Vec::new();
+    let mut skip_mirror = false;
+    for line in lines {
+        if line.clone().contains("systemProp.http.proxyHost")
+            || line.clone().contains("systemProp.https.proxyHost")
+        {
+            skip_mirror = true;
+        } else if !skip_mirror {
+            new_lines.push(line.clone());
+        }
+        if line.clone().contains("systemProp.http.proxyPort")
+            || line.clone().contains("systemProp.https.proxyPort")
+        {
+            skip_mirror = false;
+        }
+    }
+
+    // 将新的配置写入文件
+    let mut file = fs::File::create(&gradle_config_path).unwrap();
+    for line in new_lines {
+        writeln!(file, "{}", line).unwrap();
+    }
+
+    println!("Successfully removed the Gradle mirror.");
 }
