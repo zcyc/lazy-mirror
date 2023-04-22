@@ -227,5 +227,5 @@ pub fn gradle_unset() {
         writeln!(file, "{}", line).unwrap();
     }
 
-    println!("Successfully removed the Gradle mirror.");
+    println!("Successfully unset the Gradle mirror.");
 }

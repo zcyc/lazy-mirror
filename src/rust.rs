@@ -30,23 +30,31 @@ pub fn set() {
     let mut new_lines: Vec<String> = Vec::new();
     let mut found_registry = false;
     for line in lines {
-        if line.starts_with(r#"[registry."#) {
-            new_lines.push("[registry.crates-io]".to_string());
-            new_lines.push(
-                "index = \"https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git\""
-                    .to_string(),
-            );
+        if line.starts_with("[source.crates-io]") {
+            new_lines.push(line.to_owned());
+            new_lines.push("replace-with = 'rsproxy'".to_owned());
             found_registry = true;
         } else {
             new_lines.push(line);
         }
     }
     if !found_registry {
-        new_lines.push("[registry.crates-io]".to_string());
-        new_lines.push(
-            "index = \"https://mirrors.tuna.tsinghua.edu.cn/git/crates.io-index.git\"".to_string(),
-        );
+        new_lines.push("[source.crates-io]".to_owned());
+        new_lines.push("replace-with = 'rsproxy'".to_owned());
     }
+
+    // 添加镜像配置
+    new_lines.push("[source.rsproxy]".to_owned());
+    new_lines.push("registry = 'https://rsproxy.cn/crates.io-index'".to_owned());
+
+    new_lines.push("[source.rsproxy-sparse]".to_owned());
+    new_lines.push("registry = 'sparse+https://rsproxy.cn/index/'".to_owned());
+
+    new_lines.push("[registries.rsproxy]".to_owned());
+    new_lines.push("index = 'https://rsproxy.cn/crates.io-index'".to_owned());
+
+    new_lines.push("[net]".to_owned());
+    new_lines.push("git-fetch-with-cli = true".to_owned());
 
     // 将新的配置写入文件
     let mut file = fs::File::create(&cargo_config_path).unwrap();
@@ -68,9 +76,9 @@ pub fn unset() {
     };
     let cargo_config_path = home_dir.join(".cargo").join("config");
 
-    // 如果配置文件不存在，则退出
+    // 如果配置文件不存在，则直接返回
     if !Path::new(&cargo_config_path).exists() {
-        eprintln!("Error: could not find Cargo configuration file.");
+        eprintln!("Error: .cargo/config file does not exist.");
         return;
     }
 
@@ -79,17 +87,37 @@ pub fn unset() {
     let reader = BufReader::new(file);
     let lines: Vec<String> = reader.lines().map(|l| l.unwrap()).collect();
 
-    // 查找 registry 部分，并删除它
+    // 搜索要删除的内容，并将其从配置文件中移除
+    let mut deleted_lines = 0;
+    let deleted_content = vec![
+        "[source.crates-io]".to_string(),
+        "replace-with = 'rsproxy'".to_string(),
+        "".to_string(),
+        "[source.rsproxy]".to_string(),
+        "registry = \"https://rsproxy.cn/crates.io-index\"".to_string(),
+        "".to_string(),
+        "[source.rsproxy-sparse]".to_string(),
+        "registry = \"sparse+https://rsproxy.cn/index/\"".to_string(),
+        "".to_string(),
+        "[registries.rsproxy]".to_string(),
+        "index = \"https://rsproxy.cn/crates.io-index\"".to_string(),
+        "".to_string(),
+        "[net]".to_string(),
+        "git-fetch-with-cli = true".to_string(),
+    ];
     let mut new_lines: Vec<String> = Vec::new();
-    let mut in_registry = false;
     for line in lines {
-        if line.starts_with(r#"[registry."#) {
-            in_registry = true;
-        } else if in_registry && line.starts_with('[') {
-            in_registry = false;
-        } else if !in_registry {
+        if deleted_content.contains(&line) {
+            deleted_lines += 1;
+        } else {
             new_lines.push(line);
         }
+    }
+
+    // 如果没有删除任何内容，则直接返回
+    if deleted_lines == 0 {
+        eprintln!("Error: specified content does not exist in .cargo/config file.");
+        return;
     }
 
     // 将新的配置写入文件
@@ -98,5 +126,5 @@ pub fn unset() {
         writeln!(file, "{}", line).unwrap();
     }
 
-    println!("Successfully removed the Cargo mirror.");
+    println!("Successfully unset the Cargo mirror.");
 }
