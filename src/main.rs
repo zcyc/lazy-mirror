@@ -1,5 +1,3 @@
-use std::{process::Command, string};
-
 use clap::{Parser, Subcommand};
 
 /// A fictional versioning CLI
