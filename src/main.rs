@@ -20,8 +20,31 @@ enum Commands {
     },
 }
 
-fn all(action: i32) {
-    todo!()
+fn all(name: &String, commands: &Commands) {
+    match commands {
+        Commands::Set { name: _ } => {
+            lm::go::set();
+            lm::python::set(name);
+            lm::node::set(name);
+            lm::php::set();
+            lm::java::maven_set();
+            lm::java::gradle_set();
+            lm::ruby::set();
+            lm::rust::set();
+            // lm::brew::set();
+        }
+        Commands::Unset { name: _ } => {
+            lm::go::unset();
+            lm::python::unset(name);
+            lm::node::unset(name);
+            lm::php::unset();
+            lm::java::maven_unset();
+            lm::java::gradle_unset();
+            lm::ruby::unset();
+            lm::rust::unset();
+            // lm::brew::unset();
+        }
+    };
 }
 
 fn node(name: &String, commands: &Commands) {
@@ -140,7 +163,7 @@ fn main() {
 
     match &args.command {
         Commands::Set { name } => match name.as_str() {
-            "all" => all(1),
+            "all" => all(name, &args.command),
             // node
             "npm" => node(name, &args.command),
             "pnpm" => node(name, &args.command),
@@ -171,7 +194,7 @@ fn main() {
             _ => println!("not support it"),
         },
         Commands::Unset { name } => match name.as_str() {
-            "all" => all(2),
+            "all" => all(name, &args.command),
             // node
             "npm" => node(name, &args.command),
             "pnpm" => node(name, &args.command),
