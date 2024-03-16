@@ -1,6 +1,11 @@
-# lm
+# lazy-mirror
 
-一键设置开发环境镜像
+一键设置开发环境镜像源
+
+## install
+```bash
+cargo install --git https://github.com/zcyc/lazy-mirror
+```
 
 ## usage
 
