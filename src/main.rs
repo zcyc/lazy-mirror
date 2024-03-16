@@ -93,15 +93,39 @@ fn php(commands: &Commands) {
     };
 }
 
-fn ruby(commands: &Commands) {
-    match commands {
-        Commands::Set { name: _ } => {
-            lm::ruby::set();
+fn ruby(name: &str, commands: &Commands) {
+    match name {
+        "gem" => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::ruby::gem_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::ruby::gem_unset();
+                }
+            };
         }
-        Commands::Unset { name: _ } => {
-            lm::ruby::unset();
+        "bundle" => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::ruby::bundle_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::ruby::bundle_unset();
+                }
+            };
         }
-    };
+        _ => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::ruby::gem_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::ruby::gem_unset();
+                }
+            };
+        }
+    }
 }
 
 fn java(name: &str, commands: &Commands) {
@@ -126,16 +150,17 @@ fn java(name: &str, commands: &Commands) {
                 }
             };
         }
-        _ => {}
+        _ => {
+            match commands {
+                Commands::Set { name: _ } => {
+                    lm::java::maven_set();
+                }
+                Commands::Unset { name: _ } => {
+                    lm::java::maven_unset();
+                }
+            };
+        }
     }
-    match commands {
-        Commands::Set { name: _ } => {
-            lm::java::maven_set();
-        }
-        Commands::Unset { name: _ } => {
-            lm::java::maven_unset();
-        }
-    };
 }
 
 fn rust(commands: &Commands) {
@@ -181,10 +206,9 @@ fn main() {
             "composer" => php(&args.command),
             "php" => php(&args.command),
             // ruby
-            "gem" => ruby(&args.command),
-            "ruby" => ruby(&args.command),
-            "gems" => ruby(&args.command),
-            "rubygems" => ruby(&args.command),
+            "gem" => ruby(name,&args.command),
+            "bundle" => ruby(name,&args.command),
+            "ruby" => ruby(&String::from("gem"),&args.command),
             // java
             "maven" => java(name, &args.command),
             "gradle" => java(name, &args.command),
@@ -212,10 +236,9 @@ fn main() {
             "composer" => php(&args.command),
             "php" => php(&args.command),
             // ruby
-            "gem" => ruby(&args.command),
-            "ruby" => ruby(&args.command),
-            "gems" => ruby(&args.command),
-            "rubygems" => ruby(&args.command),
+            "gem" => ruby(name,&args.command),
+            "bundle" => ruby(name,&args.command),
+            "ruby" => ruby(&String::from("gem"),&args.command),
             // java
             "maven" => java(name, &args.command),
             "gradle" => java(name, &args.command),
