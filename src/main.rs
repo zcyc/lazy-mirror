@@ -29,7 +29,8 @@ fn all(name: &String, commands: &Commands) {
             lm::php::set();
             lm::java::maven_set();
             lm::java::gradle_set();
-            lm::ruby::set();
+            lm::ruby::gem_set();
+            lm::ruby::bundle_set();
             lm::rust::set();
             // lm::brew::set();
         }
@@ -40,7 +41,8 @@ fn all(name: &String, commands: &Commands) {
             lm::php::unset();
             lm::java::maven_unset();
             lm::java::gradle_unset();
-            lm::ruby::unset();
+            lm::ruby::gem_unset();
+            lm::ruby::bundle_unset();
             lm::rust::unset();
             // lm::brew::unset();
         }

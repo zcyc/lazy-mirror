@@ -1,19 +1,38 @@
 use std::process::Command;
 
-pub fn set() {
+pub fn gem_set() {
     let output = Command::new("sh")
         .args([
             "-c",
-            "gem sources --add https://mirrors.tuna.tsinghua.edu.cn/rubygems/ --remove https://rubygems.org/",
+            "gem sources --add https://gems.ruby-china.com/ --remove https://rubygems.org/",
         ])
         .output()
         .expect("failed to execute");
     println!("{:?}", output);
 }
 
-pub fn unset() {
+pub fn gem_unset() {
     let output = Command::new("sh")
-        .args(["-c", "gem sources --add https://rubygems.org/ --remove https://mirrors.tuna.tsinghua.edu.cn/rubygems/"])
+        .args(["-c", "gem sources --add https://rubygems.org/ --remove https://gems.ruby-china.com/"])
+        .output()
+        .expect("failed to execute");
+    println!("{:?}", output);
+}
+
+pub fn bundle_set() {
+    let output = Command::new("sh")
+        .args([
+            "-c",
+            "bundle config mirror.https://rubygems.org https://gems.ruby-china.com",
+        ])
+        .output()
+        .expect("failed to execute");
+    println!("{:?}", output);
+}
+
+pub fn bundle_unset() {
+    let output = Command::new("sh")
+        .args(["-c", "bundle config  --delete 'mirror.https://rubygems.org/'"])
         .output()
         .expect("failed to execute");
     println!("{:?}", output);
