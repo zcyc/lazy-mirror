@@ -4,19 +4,20 @@
 
 一键设置开发环境镜像源
 
-## install
+当前支持 Rust(Cargo)、Ruby(RubyGems/Bundler)、Python(pip)、PHP(Composer)、Node(NPM)、Java(Maven/Gradle)、Go
+
+## 安装
 ```bash
 cargo install --git https://github.com/zcyc/lazy-mirror
 ```
 
-## usage
-
+## 使用
 ```bash
 lm set go
 lm unset go
 ```
 
-## help
+## 帮助
 ```
 A mirror setting cli for lazy
 
