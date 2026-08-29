@@ -49,6 +49,7 @@ eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境�
 `--only-installed`、`--parallelism 1..64`、`--ipv4` 和 `--ipv6`；IP 选项互斥，默认自动选择。
 `get`、`plan` 也支持 `--only-installed`。
 `set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前探测、写入后复核实际配置；复核失败会尝试恢复写入前状态。
+成功时会显示 `verified`；失败信息会标记 `rollback=exact`、`rollback=attempted`，回滚本身失败时追加 `-failed`。
 对 Node/Python/JVM/Rust/Dart/Haskell 等组合目标，复核会检查本次实际修改的每个已安装成员。
 `set all`/`reset all` 默认跳过未安装或当前作用域不支持的目标；需要全量原子执行时使用
 `set all --atomic`，它会对未安装目标直接失败。
@@ -135,7 +136,8 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN、Rye、nvm、Nix、Guix 使用受管
 shell 环境变量块；`lm env` 可只输出变量而不修改文件，支持 sh、fish、PowerShell。
 项目作用域写入 `.env`，用户作用域默认写入 `.profile`，也可用 `LM_SHELL_PROFILE` 指定。
-Cargo 和 uv 使用 TOML 结构化合并，Docker 和 BuildKit 使用 JSON/TOML 结构化合并。
+Cargo 和 uv 使用 TOML 结构化合并，项目 scope 会分别识别最近父目录的 `.cargo/config.toml`/`.cargo/config`
+和 `uv.toml`/`pyproject.toml`（同目录的 `uv.toml` 优先）；Docker 和 BuildKit 使用 JSON/TOML 结构化合并。
 
 `lm catalog lint` 不联网，只校验内置目标、全局选择器唯一性、mirror 名称和 URL；建议在 CI
 中运行，避免新增目标或 mirror 时破坏命令解析。

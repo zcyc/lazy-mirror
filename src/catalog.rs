@@ -19,7 +19,8 @@ pub struct TargetSpec {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ProbeResponse {
     Any,
-    Json,
+    JsonObject,
+    JsonArray,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -592,13 +593,13 @@ pub fn find(name: &str) -> Option<&'static TargetSpec> {
 pub fn probe_spec(target: &str) -> ProbeSpec {
     let (suffix, response) = match target {
         "apt" | "ros" => ("/dists/{distribution}/Release", ProbeResponse::Any),
-        "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::Json),
+        "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::JsonObject),
         "pip" | "uv" | "pdm" | "poetry" => ("/simple/", ProbeResponse::Any),
         "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
-        "conda" => ("/pkgs/main/repodata.json", ProbeResponse::Json),
+        "conda" => ("/pkgs/main/repodata.json", ProbeResponse::JsonObject),
         "cran" => ("/src/contrib/PACKAGES", ProbeResponse::Any),
-        "huggingface" => ("/api/models?limit=1", ProbeResponse::Json),
-        "nuget" => ("/v3/index.json", ProbeResponse::Json),
+        "huggingface" => ("/api/models?limit=1", ProbeResponse::JsonArray),
+        "nuget" => ("/v3/index.json", ProbeResponse::JsonObject),
         "apk" => (
             "/latest-stable/main/x86_64/APKINDEX.tar.gz",
             ProbeResponse::Any,
@@ -753,7 +754,7 @@ mod tests {
             probe_spec("huggingface"),
             ProbeSpec {
                 suffix: "/api/models?limit=1",
-                response: ProbeResponse::Json,
+                response: ProbeResponse::JsonArray,
             }
         );
         assert_eq!(

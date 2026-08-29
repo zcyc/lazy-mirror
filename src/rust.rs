@@ -80,9 +80,36 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
 
 fn config_path(scope: Scope) -> io::Result<PathBuf> {
     match scope {
-        Scope::Project => std::env::current_dir().map(|path| path.join(".cargo/config.toml")),
-        Scope::User => Ok(cargo_home()?.join("config.toml")),
-        Scope::System => Ok(PathBuf::from("/etc/cargo/config.toml")),
+        Scope::Project => {
+            let current = std::env::current_dir()?;
+            Ok(project_config_path(&current))
+        }
+        Scope::User => Ok(preferred_config_path(
+            &cargo_home()?,
+            "config.toml",
+            "config",
+        )),
+        Scope::System => Ok(preferred_config_path(
+            std::path::Path::new("/etc/cargo"),
+            "config.toml",
+            "config",
+        )),
+    }
+}
+
+fn project_config_path(start: &std::path::Path) -> PathBuf {
+    crate::nearest_existing_file(start, &[".cargo/config.toml", ".cargo/config"])
+        .unwrap_or_else(|| start.join(".cargo/config.toml"))
+}
+
+fn preferred_config_path(directory: &std::path::Path, modern: &str, legacy: &str) -> PathBuf {
+    let modern = directory.join(modern);
+    if modern.is_file() {
+        modern
+    } else if directory.join(legacy).is_file() {
+        directory.join(legacy)
+    } else {
+        modern
     }
 }
 
@@ -117,4 +144,32 @@ fn registry(document: &toml::Table) -> Option<&str> {
         .and_then(toml::Value::as_table)
         .and_then(|mirror| mirror.get("registry"))
         .and_then(toml::Value::as_str)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn project_config_uses_nearest_cargo_config_and_prefers_toml() {
+        let root = std::env::temp_dir().join(format!(
+            "lm-cargo-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = root.join("packages/example");
+        std::fs::create_dir_all(&nested).unwrap();
+        let legacy = root.join(".cargo/config");
+        std::fs::create_dir_all(legacy.parent().unwrap()).unwrap();
+        std::fs::write(&legacy, "").unwrap();
+        assert_eq!(project_config_path(&nested), legacy);
+
+        let modern = root.join(".cargo/config.toml");
+        std::fs::write(&modern, "").unwrap();
+        assert_eq!(project_config_path(&nested), modern);
+        std::fs::remove_dir_all(root).unwrap();
+    }
 }

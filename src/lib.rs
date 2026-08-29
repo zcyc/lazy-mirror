@@ -240,6 +240,19 @@ pub(crate) fn home_file(relative_path: &str) -> io::Result<std::path::PathBuf> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory"))
 }
 
+pub(crate) fn nearest_existing_file(start: &Path, names: &[&str]) -> Option<PathBuf> {
+    let mut directory = start;
+    loop {
+        for name in names {
+            let path = directory.join(name);
+            if path.is_file() {
+                return Some(path);
+            }
+        }
+        directory = directory.parent()?;
+    }
+}
+
 pub(crate) fn write_with_backup_if<F>(path: &Path, content: &str, managed: F) -> io::Result<()>
 where
     F: Fn(&str) -> bool,

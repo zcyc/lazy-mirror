@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::env;
+use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
@@ -175,7 +177,20 @@ fn request(
     ip_version: IpVersion,
 ) -> io::Result<ProbeResult> {
     let started = Instant::now();
-    let output_path = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    let response_spec = crate::catalog::probe_spec(target);
+    let body_path = (response_spec.response != crate::catalog::ProbeResponse::Any)
+        .then(temp_probe_body_path)
+        .transpose()?;
+    let output_path = body_path.as_ref().map_or_else(
+        || {
+            if cfg!(windows) {
+                "NUL".to_owned()
+            } else {
+                "/dev/null".to_owned()
+            }
+        },
+        |path| path.to_string_lossy().into_owned(),
+    );
     let timeout = timeout_seconds.max(1).to_string();
     let mut args = vec![
         "--location".to_owned(),
@@ -188,10 +203,18 @@ fn request(
         "--user-agent".to_owned(),
         "lazy-mirror/0.1 (+mirror-check)".to_owned(),
         "--output".to_owned(),
-        output_path.to_owned(),
+        output_path,
         "--write-out".to_owned(),
         "%{http_code}\t%{content_type}\t%{remote_ip}\t%{time_namelookup}\t%{time_connect}\t%{time_appconnect}\t%{time_starttransfer}".to_owned(),
     ];
+    if body_path.is_some() {
+        args.extend([
+            "--max-filesize".to_owned(),
+            "131072".to_owned(),
+            "--range".to_owned(),
+            "0-65535".to_owned(),
+        ]);
+    }
     match ip_version {
         IpVersion::Any => {}
         IpVersion::V4 => args.push("--ipv4".to_owned()),
@@ -203,20 +226,43 @@ fn request(
         args.extend(["--config".to_owned(), "-".to_owned()]);
     }
     let output = if let Some(curl_config) = curl_config {
-        let mut child = Command::new("curl")
+        let mut child = match Command::new("curl")
             .args(&args)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
-            .spawn()?;
+            .spawn()
+        {
+            Ok(child) => child,
+            Err(error) => {
+                remove_probe_body(&body_path);
+                return Err(error);
+            }
+        };
         if let Some(mut stdin) = child.stdin.take() {
-            stdin.write_all(curl_config.as_bytes())?;
+            if let Err(error) = stdin.write_all(curl_config.as_bytes()) {
+                remove_probe_body(&body_path);
+                return Err(error);
+            }
         }
-        child.wait_with_output()?
+        match child.wait_with_output() {
+            Ok(output) => output,
+            Err(error) => {
+                remove_probe_body(&body_path);
+                return Err(error);
+            }
+        }
     } else {
-        Command::new("curl").args(&args).output()?
+        match Command::new("curl").args(&args).output() {
+            Ok(output) => output,
+            Err(error) => {
+                remove_probe_body(&body_path);
+                return Err(error);
+            }
+        }
     };
     if !output.status.success() {
+        remove_probe_body(&body_path);
         let detail = redact_probe_text(String::from_utf8_lossy(&output.stderr).trim());
         return Err(io::Error::other(if detail.is_empty() {
             format!("curl exited with {}", output.status)
@@ -224,16 +270,29 @@ fn request(
             detail
         }));
     }
+    let body = if let Some(path) = body_path {
+        let body = fs::read(&path);
+        let _ = fs::remove_file(path);
+        body?
+    } else {
+        Vec::new()
+    };
     let raw_metrics = parse_curl_metrics(String::from_utf8_lossy(&output.stdout).trim())?;
     if raw_metrics.code == "000" || raw_metrics.code.is_empty() {
         return Err(io::Error::other("mirror did not return an HTTP status"));
     }
-    let state = classify_protocol_response(
+    let response_error = protocol_response_error(
         target,
         &raw_metrics.code,
         raw_metrics.content_type.as_deref(),
+        &body,
     );
-    let detail = protocol_detail(&state, raw_metrics.content_type.as_deref());
+    let state = response_error.as_ref().map_or_else(
+        || classify(&raw_metrics.code),
+        |_| "invalid-response".to_owned(),
+    );
+    let detail = response_error
+        .unwrap_or_else(|| protocol_detail(&state, raw_metrics.content_type.as_deref()));
     let code = raw_metrics.code.clone();
     let metrics = raw_metrics.into_public();
     Ok(ProbeResult {
@@ -244,6 +303,22 @@ fn request(
         milliseconds: started.elapsed().as_millis(),
         metrics,
     })
+}
+
+fn temp_probe_body_path() -> io::Result<PathBuf> {
+    let path = env::temp_dir().join(format!(
+        "lazy-mirror-probe-{}-{}.body",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&path)?;
+    Ok(path)
 }
 
 fn parse_curl_metrics(output: &str) -> io::Result<ProbeResultMetrics> {
@@ -299,6 +374,12 @@ fn non_empty(value: &str) -> Option<String> {
     (!value.is_empty()).then(|| value.to_owned())
 }
 
+fn remove_probe_body(path: &Option<PathBuf>) {
+    if let Some(path) = path {
+        let _ = fs::remove_file(path);
+    }
+}
+
 fn curl_seconds_to_milliseconds(value: &str) -> io::Result<u128> {
     let value = value.parse::<f64>().map_err(|_| {
         io::Error::new(
@@ -315,15 +396,41 @@ fn curl_seconds_to_milliseconds(value: &str) -> io::Result<u128> {
     Ok((value * 1000.0).round() as u128)
 }
 
-fn classify_protocol_response(target: &str, code: &str, content_type: Option<&str>) -> String {
+fn protocol_response_error(
+    target: &str,
+    code: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Option<String> {
     let state = classify(code);
-    if state == "healthy"
-        && crate::catalog::probe_spec(target).response == crate::catalog::ProbeResponse::Json
-        && !content_type.is_some_and(|value| value.to_ascii_lowercase().contains("json"))
-    {
-        "invalid-response".to_owned()
+    if state != "healthy" {
+        return None;
+    }
+    let response = crate::catalog::probe_spec(target).response;
+    if response == crate::catalog::ProbeResponse::Any {
+        return None;
+    }
+    if !content_type.is_some_and(|value| value.to_ascii_lowercase().contains("json")) {
+        return Some(format!(
+            "endpoint returned an unexpected content type: {}",
+            content_type.unwrap_or("missing")
+        ));
+    }
+    let value = match serde_json::from_slice::<serde_json::Value>(body) {
+        Ok(value) => value,
+        Err(error) => return Some(format!("endpoint returned invalid JSON: {error}")),
+    };
+    let valid_shape = match response {
+        crate::catalog::ProbeResponse::JsonObject => value.is_object(),
+        crate::catalog::ProbeResponse::JsonArray => value.is_array(),
+        crate::catalog::ProbeResponse::Any => true,
+    };
+    if valid_shape {
+        None
     } else {
-        state
+        Some(format!(
+            "endpoint returned JSON with an unexpected shape for {target}"
+        ))
     }
 }
 
@@ -578,12 +685,20 @@ mod tests {
         assert_eq!(classify("429"), "rate-limited");
         assert_eq!(classify("404"), "unsupported");
         assert_eq!(
-            classify_protocol_response("huggingface", "200", Some("text/html")),
-            "invalid-response"
+            protocol_response_error("huggingface", "200", Some("text/html"), b"[]").as_deref(),
+            Some("endpoint returned an unexpected content type: text/html")
         );
-        assert_eq!(
-            classify_protocol_response("huggingface", "200", Some("application/json")),
-            "healthy"
+        assert!(
+            protocol_response_error("huggingface", "200", Some("application/json"), b"[]")
+                .is_none()
+        );
+        assert!(
+            protocol_response_error("huggingface", "200", Some("application/json"), b"{}")
+                .is_some()
+        );
+        assert!(
+            protocol_response_error("nuget", "200", Some("application/json"), b"not-json")
+                .is_some()
         );
     }
 

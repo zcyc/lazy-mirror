@@ -758,33 +758,6 @@ fn catalog_name(target: Target) -> &'static str {
         Target::Haskell | Target::Hackage | Target::Cabal => "cabal",
         Target::Ocaml => "opam",
         Target::Luarocks => "luarocks",
-        target @ (Target::Linuxmint
-        | Target::Fedora
-        | Target::Opensuse
-        | Target::Kali
-        | Target::Arch
-        | Target::Archlinuxcn
-        | Target::Manjaro
-        | Target::Gentoo
-        | Target::Rocky
-        | Target::Alma
-        | Target::Voidlinux
-        | Target::Solus
-        | Target::Ros
-        | Target::Trisquel
-        | Target::Linuxlite
-        | Target::Raspi
-        | Target::Armbian
-        | Target::Openwrt
-        | Target::Openeuler
-        | Target::Openanolis
-        | Target::Openkylin
-        | Target::Deepin
-        | Target::Msys2
-        | Target::Termux
-        | Target::Freebsd
-        | Target::Openbsd
-        | Target::Netbsd) => target_name(target),
         target => target_name(target),
     }
 }
@@ -1146,6 +1119,21 @@ fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()
 
 type Snapshot = Vec<(Target, Option<String>)>;
 
+#[derive(Clone, Copy)]
+enum RollbackMode {
+    Exact,
+    Attempted,
+}
+
+impl RollbackMode {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Exact => "exact",
+            Self::Attempted => "attempted",
+        }
+    }
+}
+
 fn verification_targets(target: Target) -> Vec<Target> {
     match target {
         Target::Node => vec![Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun],
@@ -1188,21 +1176,37 @@ fn snapshot_targets(target: Target, config: &Config, scope: Scope) -> io::Result
     Ok(snapshot)
 }
 
-fn restore_snapshot(snapshot: &Snapshot, scope: Scope) -> io::Result<()> {
+fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<RollbackMode> {
+    let mode = rollback_mode(snapshots);
     let mut errors = Vec::new();
-    for (target, source) in snapshot.iter().rev() {
-        let result = match source {
-            Some(source) => run_action(*target, Action::Set, Some(source), scope),
-            None => run_action(*target, Action::Reset, None, scope),
-        };
-        if let Err(error) = result {
-            errors.push(format!("rollback {} failed: {error}", target_name(*target)));
+    for snapshot in snapshots {
+        for (target, source) in snapshot.iter().rev() {
+            let result = match source {
+                Some(source) => run_action(*target, Action::Set, Some(source), scope),
+                None => run_action(*target, Action::Reset, None, scope),
+            };
+            if let Err(error) = result {
+                errors.push(format!("rollback {} failed: {error}", target_name(*target)));
+            }
         }
     }
     if errors.is_empty() {
-        Ok(())
+        Ok(mode)
     } else {
         Err(io::Error::other(errors.join("; ")))
+    }
+}
+
+fn rollback_mode(snapshots: &[&Snapshot]) -> RollbackMode {
+    if !snapshots.is_empty()
+        && snapshots
+            .iter()
+            .flat_map(|snapshot| snapshot.iter().map(|(target, _)| *target))
+            .all(atomic_supported)
+    {
+        RollbackMode::Exact
+    } else {
+        RollbackMode::Attempted
     }
 }
 
@@ -1289,9 +1293,16 @@ fn execute(
     let result = match result {
         Ok(()) => Ok(()),
         Err(error) if !previous.is_empty() && !options.dry_run => {
-            match restore_snapshot(&previous, options.scope) {
-                Ok(()) => Err(io::Error::other(format!("{error}; changes rolled back"))),
-                Err(rollback) => Err(io::Error::other(format!("{error}; {rollback}"))),
+            let mode = rollback_mode(&[&previous]);
+            match restore_snapshots(&[&previous], options.scope) {
+                Ok(mode) => Err(io::Error::other(format!(
+                    "{error}; rollback={}",
+                    mode.label()
+                ))),
+                Err(rollback) => Err(io::Error::other(format!(
+                    "{error}; rollback={}-failed: {rollback}",
+                    mode.label()
+                ))),
             }
         }
         Err(error) => Err(error),
@@ -1334,9 +1345,10 @@ fn execute_resolved(
     };
     if action == Action::Set {
         println!(
-            "{verb} {} mirror to {}",
+            "{verb} {} mirror to {}{}",
             target_name(target),
-            redact_url(mirror.unwrap_or_default())
+            redact_url(mirror.unwrap_or_default()),
+            if verify { "; verified" } else { "" }
         );
     } else {
         println!("{verb} {} mirror", target_name(target));
@@ -1451,22 +1463,18 @@ fn execute_all(
             options.verify,
         ) {
             if (options.atomic || options.verify) && !options.dry_run {
-                let mut rollback_error = None;
-                if let Err(rollback) = restore_snapshot(&previous, options.scope) {
-                    rollback_error = Some(rollback.to_string());
-                }
-                for (_, previous) in applied.into_iter().rev() {
-                    if let Err(rollback) = restore_snapshot(&previous, options.scope) {
-                        rollback_error = Some(match rollback_error {
-                            Some(existing) => format!("{existing}; {rollback}"),
-                            None => rollback.to_string(),
-                        });
-                    }
-                }
-                return Err(io::Error::other(match rollback_error {
-                    Some(rollback) => format!("{error}; {rollback}"),
-                    None => format!("{error}; changes rolled back"),
-                }));
+                let snapshots = std::iter::once(&previous)
+                    .chain(applied.iter().rev().map(|(_, snapshot)| snapshot))
+                    .collect::<Vec<_>>();
+                let mode = rollback_mode(&snapshots);
+                return Err(io::Error::other(
+                    match restore_snapshots(&snapshots, options.scope) {
+                        Ok(mode) => format!("{error}; rollback={}", mode.label()),
+                        Err(rollback) => {
+                            format!("{error}; rollback={}-failed: {rollback}", mode.label())
+                        }
+                    },
+                ));
             }
             return Err(error);
         }
