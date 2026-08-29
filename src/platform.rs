@@ -92,7 +92,7 @@ pub fn apk_status(scope: Scope) -> io::Result<crate::ToolStatus> {
 }
 
 pub fn env_set(name: &str, variable: &str, mirror: &str, scope: Scope) -> io::Result<()> {
-    profile_set(name, scope, &format!("export {variable}=\"{mirror}\""))
+    profile_set(name, scope, &crate::shell_env_assignment(variable, mirror))
 }
 
 pub fn env_unset(name: &str, scope: Scope) -> io::Result<()> {
@@ -584,9 +584,25 @@ pub fn brew_set(mirror: &str, scope: Scope) -> io::Result<()> {
     profile_set(
         "homebrew",
         scope,
-        &format!(
-            "export HOMEBREW_API_DOMAIN=\"{base}/homebrew-bottles/api\"\nexport HOMEBREW_BOTTLE_DOMAIN=\"{base}/homebrew-bottles\"\nexport HOMEBREW_BREW_GIT_REMOTE=\"{base}/git/homebrew/brew.git\"\nexport HOMEBREW_CORE_GIT_REMOTE=\"{base}/git/homebrew/homebrew-core.git\""
-        ),
+        &[
+            crate::shell_env_assignment(
+                "HOMEBREW_API_DOMAIN",
+                &format!("{base}/homebrew-bottles/api"),
+            ),
+            crate::shell_env_assignment(
+                "HOMEBREW_BOTTLE_DOMAIN",
+                &format!("{base}/homebrew-bottles"),
+            ),
+            crate::shell_env_assignment(
+                "HOMEBREW_BREW_GIT_REMOTE",
+                &format!("{base}/git/homebrew/brew.git"),
+            ),
+            crate::shell_env_assignment(
+                "HOMEBREW_CORE_GIT_REMOTE",
+                &format!("{base}/git/homebrew/homebrew-core.git"),
+            ),
+        ]
+        .join("\n"),
     )
 }
 
@@ -603,9 +619,11 @@ pub fn rustup_set(mirror: &str, scope: Scope) -> io::Result<()> {
     profile_set(
         "rustup",
         scope,
-        &format!(
-            "export RUSTUP_DIST_SERVER=\"{base}\"\nexport RUSTUP_UPDATE_ROOT=\"{base}/rustup\""
-        ),
+        &[
+            crate::shell_env_assignment("RUSTUP_DIST_SERVER", base),
+            crate::shell_env_assignment("RUSTUP_UPDATE_ROOT", &format!("{base}/rustup")),
+        ]
+        .join("\n"),
     )
 }
 
@@ -661,7 +679,7 @@ pub fn julia_set(mirror: &str, scope: Scope) -> io::Result<()> {
     profile_set(
         "julia",
         scope,
-        &format!("export JULIA_PKG_SERVER=\"{mirror}\""),
+        &crate::shell_env_assignment("JULIA_PKG_SERVER", mirror),
     )
 }
 
@@ -677,7 +695,7 @@ pub fn cpan_set(mirror: &str, scope: Scope) -> io::Result<()> {
     profile_set(
         "cpan",
         scope,
-        &format!("export PERL_CPAN_MIRROR=\"{mirror}\""),
+        &crate::shell_env_assignment("PERL_CPAN_MIRROR", mirror),
     )
 }
 
@@ -783,14 +801,7 @@ fn profile_status(
             .contains(&marker)
             .then(|| content.lines().find(|line| line.contains(variable)))
             .flatten()
-            .and_then(|line| {
-                line.split_once('=')?
-                    .1
-                    .trim()
-                    .strip_prefix('"')?
-                    .strip_suffix('"')
-            })
-            .map(str::to_owned)
+            .and_then(|line| crate::shell_env_value(line, variable))
     });
     let source = value.clone().or_else(|| in_profile.clone());
     Ok(crate::ToolStatus {
@@ -815,10 +826,23 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
             if let Some(path) = std::env::var_os("LM_SHELL_PROFILE") {
                 Ok(path.into())
             } else {
+                #[cfg(windows)]
+                {
+                    return crate::powershell_profile_path();
+                }
                 crate::home_file(".profile")
             }
         }
-        Scope::System => Ok(PathBuf::from("/etc/profile")),
+        Scope::System => {
+            #[cfg(windows)]
+            {
+                crate::powershell_system_profile_path()
+            }
+            #[cfg(not(windows))]
+            {
+                Ok(PathBuf::from("/etc/profile"))
+            }
+        }
     }
 }
 

@@ -8,7 +8,7 @@ pub fn dart_set(mirror: &str, scope: Scope) -> io::Result<()> {
     crate::update_named_managed_block(
         &path,
         "dart",
-        &format!("export PUB_HOSTED_URL=\"{mirror}\""),
+        &crate::shell_env_assignment("PUB_HOSTED_URL", mirror),
     )
 }
 
@@ -18,9 +18,11 @@ pub fn flutter_set(mirror: &str, scope: Scope) -> io::Result<()> {
     crate::update_named_managed_block(
         &path,
         "flutter",
-        &format!(
-            "export PUB_HOSTED_URL=\"{pub_url}\"\nexport FLUTTER_STORAGE_BASE_URL=\"{mirror}\""
-        ),
+        &[
+            crate::shell_env_assignment("PUB_HOSTED_URL", &pub_url),
+            crate::shell_env_assignment("FLUTTER_STORAGE_BASE_URL", mirror),
+        ]
+        .join("\n"),
     )
 }
 
@@ -70,10 +72,9 @@ pub fn flutter_status(expected: &str, scope: Scope) -> io::Result<crate::ToolSta
 }
 
 fn env_value(content: &str, variable: &str) -> Option<String> {
-    content.lines().find_map(|line| {
-        let value = line.split_once(&format!("{variable}=\""))?.1;
-        value.split_once('"').map(|(value, _)| value.to_owned())
-    })
+    content
+        .lines()
+        .find_map(|line| crate::shell_env_value(line, variable))
 }
 
 fn pub_url(mirror: &str) -> String {
@@ -93,6 +94,10 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
             if let Some(path) = std::env::var_os("LM_SHELL_PROFILE") {
                 return Ok(PathBuf::from(path));
             }
+            #[cfg(windows)]
+            {
+                return crate::powershell_profile_path();
+            }
             let shell = std::env::var_os("SHELL")
                 .map(|value| value.to_string_lossy().into_owned())
                 .unwrap_or_default();
@@ -104,6 +109,15 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
                 crate::home_file(".zshrc")
             }
         }
-        Scope::System => Ok(PathBuf::from("/etc/profile")),
+        Scope::System => {
+            #[cfg(windows)]
+            {
+                crate::powershell_system_profile_path()
+            }
+            #[cfg(not(windows))]
+            {
+                Ok(PathBuf::from("/etc/profile"))
+            }
+        }
     }
 }

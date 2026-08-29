@@ -1373,23 +1373,93 @@ fn source_matches(target: Target, status: &lm::ToolStatus, expected: &str) -> bo
     if !status.configured {
         return false;
     }
-    if matches!(
-        target,
+    let Some(source) = status.source.as_deref() else {
+        return target == Target::Cocoapods;
+    };
+    match target {
+        Target::Apt => apt_source_matches(source, expected),
+        Target::Brew => url_matches(
+            source,
+            &format!("{}/homebrew-bottles", expected.trim_end_matches('/')),
+        ),
+        Target::Arch
+        | Target::Archlinuxcn
+        | Target::Manjaro
+        | Target::Msys2
+        | Target::Voidlinux => prefixed_source_matches(source, expected),
         Target::Docker
-            | Target::Buildkit
-            | Target::Containerd
-            | Target::Nerdctl
-            | Target::Podman
-            | Target::Helm
-            | Target::Nuget
-            | Target::Dotnet
-    ) {
-        return status
-            .source
-            .as_deref()
-            .is_some_and(|source| source.trim_end_matches('/') == expected.trim_end_matches('/'));
+        | Target::Buildkit
+        | Target::Containerd
+        | Target::Nerdctl
+        | Target::Podman
+        | Target::Helm
+        | Target::Apk
+        | Target::Rustup
+        | Target::Hex
+        | Target::Julia
+        | Target::Cpan
+        | Target::Winget
+        | Target::Opam
+        | Target::Ocaml
+        | Target::Nuget
+        | Target::Dotnet => url_matches(source, expected),
+        Target::Linuxmint
+        | Target::Fedora
+        | Target::Opensuse
+        | Target::Kali
+        | Target::Gentoo
+        | Target::Rocky
+        | Target::Alma
+        | Target::Solus
+        | Target::Ros
+        | Target::Trisquel
+        | Target::Linuxlite
+        | Target::Raspi
+        | Target::Armbian
+        | Target::Openwrt
+        | Target::Openeuler
+        | Target::Openanolis
+        | Target::Openkylin
+        | Target::Deepin
+        | Target::Termux
+        | Target::Freebsd
+        | Target::Openbsd
+        | Target::Netbsd => url_matches(source, expected),
+        _ => true,
     }
-    true
+}
+
+fn url_matches(source: &str, expected: &str) -> bool {
+    source.trim().trim_end_matches('/') == expected.trim().trim_end_matches('/')
+}
+
+fn prefixed_source_matches(source: &str, expected: &str) -> bool {
+    let source = source.trim().trim_end_matches('/');
+    let expected = expected.trim().trim_end_matches('/');
+    source == expected
+        || source
+            .strip_prefix(expected)
+            .is_some_and(|suffix| suffix.starts_with('/'))
+}
+
+fn apt_source_matches(source: &str, expected: &str) -> bool {
+    let mut found = false;
+    for line in source.lines() {
+        let mut fields = line.split_whitespace();
+        if !matches!(fields.next(), Some("deb" | "deb-src")) {
+            continue;
+        }
+        found = true;
+        let Some(url) =
+            fields.find(|field| field.starts_with("http://") || field.starts_with("https://"))
+        else {
+            return false;
+        };
+        if !url_matches(url, expected) {
+            return false;
+        }
+    }
+    found
 }
 
 fn verify_applied(target: Target, mirror: &str, scope: Scope) -> io::Result<()> {
@@ -3325,6 +3395,58 @@ mod tests {
             Target::Helm,
             &status,
             "https://other.example.com"
+        ));
+    }
+
+    #[test]
+    fn post_write_verification_matches_platform_source_shapes() {
+        let apt = lm::ToolStatus::new(
+            "apt".to_owned(),
+            true,
+            Some(
+                "deb https://mirror.example stable main\ndeb https://mirror.example stable updates"
+                    .to_owned(),
+            ),
+            None,
+            "",
+        );
+        assert!(source_matches(Target::Apt, &apt, "https://mirror.example/"));
+        assert!(!source_matches(Target::Apt, &apt, "https://other.example"));
+
+        let brew = lm::ToolStatus::new(
+            "brew".to_owned(),
+            true,
+            Some("https://mirror.example/homebrew-bottles".to_owned()),
+            None,
+            "",
+        );
+        assert!(source_matches(
+            Target::Brew,
+            &brew,
+            "https://mirror.example/"
+        ));
+        assert!(!source_matches(
+            Target::Brew,
+            &brew,
+            "https://other.example"
+        ));
+
+        let arch = lm::ToolStatus::new(
+            "pacman".to_owned(),
+            true,
+            Some("https://mirror.example/$repo/os/$arch".to_owned()),
+            None,
+            "",
+        );
+        assert!(source_matches(
+            Target::Arch,
+            &arch,
+            "https://mirror.example"
+        ));
+        assert!(!source_matches(
+            Target::Arch,
+            &arch,
+            "https://other.example"
         ));
     }
 

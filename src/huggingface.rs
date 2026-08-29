@@ -7,7 +7,7 @@ pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
     crate::update_named_managed_block(
         &path,
         "huggingface",
-        &format!("export HF_ENDPOINT=\"{mirror}\""),
+        &crate::shell_env_assignment("HF_ENDPOINT", mirror),
     )
 }
 
@@ -38,10 +38,9 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
 }
 
 fn env_value(content: &str, variable: &str) -> Option<String> {
-    content.lines().find_map(|line| {
-        let value = line.split_once(&format!("{variable}=\""))?.1;
-        value.split_once('"').map(|(value, _)| value.to_owned())
-    })
+    content
+        .lines()
+        .find_map(|line| crate::shell_env_value(line, variable))
 }
 
 fn command_version() -> io::Result<String> {
@@ -55,6 +54,10 @@ fn profile_path(scope: Scope) -> io::Result<std::path::PathBuf> {
             if let Some(path) = std::env::var_os("LM_SHELL_PROFILE") {
                 return Ok(path.into());
             }
+            #[cfg(windows)]
+            {
+                return crate::powershell_profile_path();
+            }
             let shell = std::env::var_os("SHELL")
                 .map(|value| value.to_string_lossy().into_owned())
                 .unwrap_or_default();
@@ -66,6 +69,15 @@ fn profile_path(scope: Scope) -> io::Result<std::path::PathBuf> {
                 crate::home_file(".zshrc")
             }
         }
-        Scope::System => Ok("/etc/profile".into()),
+        Scope::System => {
+            #[cfg(windows)]
+            {
+                crate::powershell_system_profile_path()
+            }
+            #[cfg(not(windows))]
+            {
+                Ok("/etc/profile".into())
+            }
+        }
     }
 }

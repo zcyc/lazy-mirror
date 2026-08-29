@@ -244,6 +244,66 @@ pub(crate) fn home_file(relative_path: &str) -> io::Result<std::path::PathBuf> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory"))
 }
 
+pub(crate) fn shell_env_assignment(variable: &str, value: &str) -> String {
+    #[cfg(windows)]
+    {
+        return format!("$env:{variable} = '{}'", value.replace('\'', "''"));
+    }
+    #[cfg(not(windows))]
+    {
+        format!("export {variable}=\"{value}\"")
+    }
+}
+
+pub(crate) fn shell_env_value(line: &str, variable: &str) -> Option<String> {
+    let line = line.trim();
+    let sh_prefix = format!("export {variable}=\"");
+    if let Some(value) = line.strip_prefix(&sh_prefix) {
+        return value.split_once('"').map(|(value, _)| value.to_owned());
+    }
+
+    let powershell_prefix = format!("$env:{variable} = '");
+    line.strip_prefix(&powershell_prefix).and_then(|value| {
+        value
+            .split_once('\'')
+            .map(|(value, _)| value.replace("''", "'"))
+    })
+}
+
+#[cfg(windows)]
+pub(crate) fn powershell_profile_path() -> io::Result<std::path::PathBuf> {
+    dirs::document_dir()
+        .map(|path| path.join("PowerShell/Microsoft.PowerShell_profile.ps1"))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "cannot determine Documents directory",
+            )
+        })
+}
+
+#[cfg(windows)]
+pub(crate) fn powershell_system_profile_path() -> io::Result<std::path::PathBuf> {
+    let candidates = [
+        std::env::var_os("PSHOME").map(|path| std::path::PathBuf::from(path).join("Profile.ps1")),
+        std::env::var_os("ProgramFiles")
+            .map(|path| std::path::PathBuf::from(path).join("PowerShell/7/Profile.ps1")),
+        std::env::var_os("SystemRoot").map(|path| {
+            std::path::PathBuf::from(path).join("System32/WindowsPowerShell/v1.0/Profile.ps1")
+        }),
+    ];
+    candidates
+        .into_iter()
+        .flatten()
+        .find(|path| path.parent().is_some_and(std::path::Path::is_dir))
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "cannot determine the PowerShell system profile",
+            )
+        })
+}
+
 pub(crate) fn nearest_existing_file(start: &Path, names: &[&str]) -> Option<PathBuf> {
     let mut directory = start;
     loop {
@@ -649,6 +709,22 @@ mod tests {
         remove_named_managed_block(&path, "flutter").unwrap();
         assert!(fs::read_to_string(&path).unwrap().is_empty());
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn shell_environment_assignments_round_trip() {
+        let assignment = shell_env_assignment("LM_TEST_MIRROR", "https://mirror.example");
+        assert_eq!(
+            shell_env_value(&assignment, "LM_TEST_MIRROR"),
+            Some("https://mirror.example".to_owned())
+        );
+        #[cfg(windows)]
+        assert_eq!(assignment, "$env:LM_TEST_MIRROR = 'https://mirror.example'");
+        #[cfg(not(windows))]
+        assert_eq!(
+            assignment,
+            "export LM_TEST_MIRROR=\"https://mirror.example\""
+        );
     }
 
     #[test]
