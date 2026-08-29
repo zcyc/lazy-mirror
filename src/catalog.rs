@@ -16,6 +16,18 @@ pub struct TargetSpec {
     pub mirrors: &'static [MirrorSpec],
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ProbeResponse {
+    Any,
+    Json,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProbeSpec {
+    pub suffix: &'static str,
+    pub response: ProbeResponse,
+}
+
 const NODE: &[MirrorSpec] = &[
     MirrorSpec {
         name: "npmmirror",
@@ -577,6 +589,30 @@ pub fn find(name: &str) -> Option<&'static TargetSpec> {
         .find(|target| target.name == name || target.aliases.contains(&name))
 }
 
+pub fn probe_spec(target: &str) -> ProbeSpec {
+    let (suffix, response) = match target {
+        "apt" | "ros" => ("/dists/{distribution}/Release", ProbeResponse::Any),
+        "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::Json),
+        "pip" | "uv" | "pdm" | "poetry" => ("/simple/", ProbeResponse::Any),
+        "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
+        "conda" => ("/pkgs/main/repodata.json", ProbeResponse::Json),
+        "cran" => ("/src/contrib/PACKAGES", ProbeResponse::Any),
+        "huggingface" => ("/api/models?limit=1", ProbeResponse::Json),
+        "nuget" => ("/v3/index.json", ProbeResponse::Json),
+        "apk" => (
+            "/latest-stable/main/x86_64/APKINDEX.tar.gz",
+            ProbeResponse::Any,
+        ),
+        "rustup" => ("/dist/channel-rust-stable.toml", ProbeResponse::Any),
+        "cpan" => ("/modules/02packages.details.txt.gz", ProbeResponse::Any),
+        "luarocks" => ("/manifest", ProbeResponse::Any),
+        "hackage" | "cabal" | "stack" => ("/01-index.tar.gz", ProbeResponse::Any),
+        "flathub" => ("/summary", ProbeResponse::Any),
+        _ => ("", ProbeResponse::Any),
+    };
+    ProbeSpec { suffix, response }
+}
+
 pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Result<String> {
     let spec = find(target).ok_or_else(|| invalid_target(target))?;
     let selection = selector.or_else(|| config.default_for(spec.name));
@@ -709,5 +745,24 @@ mod tests {
     #[test]
     fn built_in_catalog_is_valid() {
         lint().unwrap();
+    }
+
+    #[test]
+    fn probe_specs_keep_protocol_contracts_with_the_catalog() {
+        assert_eq!(
+            probe_spec("huggingface"),
+            ProbeSpec {
+                suffix: "/api/models?limit=1",
+                response: ProbeResponse::Json,
+            }
+        );
+        assert_eq!(
+            probe_spec("pip"),
+            ProbeSpec {
+                suffix: "/simple/",
+                response: ProbeResponse::Any,
+            }
+        );
+        assert_eq!(probe_spec("unknown").suffix, "");
     }
 }

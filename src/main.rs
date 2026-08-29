@@ -1144,6 +1144,113 @@ fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()
     }
 }
 
+type Snapshot = Vec<(Target, Option<String>)>;
+
+fn verification_targets(target: Target) -> Vec<Target> {
+    match target {
+        Target::Node => vec![Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun],
+        Target::Python => vec![Target::Pip, Target::Uv, Target::Pdm, Target::Poetry],
+        Target::Java => vec![Target::Maven, Target::Gradle, Target::Sbt],
+        Target::Rust => vec![Target::Cargo, Target::Rustup],
+        Target::Dart => vec![Target::Dart, Target::Flutter],
+        Target::Haskell => vec![Target::Cabal, Target::Stack],
+        target => vec![target],
+    }
+}
+
+fn snapshot_targets(target: Target, config: &Config, scope: Scope) -> io::Result<Snapshot> {
+    let mut snapshot = Vec::new();
+    for target in verification_targets(target) {
+        if validate_scope(target, scope).is_err() || !is_installed(target) {
+            continue;
+        }
+        let status = inspect(target, config, scope)?;
+        if status.configured && status.source.is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} has no structured previous source; --verify cannot restore it",
+                    target_name(target)
+                ),
+            ));
+        }
+        snapshot.push((target, status.source));
+    }
+    if snapshot.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "{} has no installed target that can be verified",
+                target_name(target)
+            ),
+        ));
+    }
+    Ok(snapshot)
+}
+
+fn restore_snapshot(snapshot: &Snapshot, scope: Scope) -> io::Result<()> {
+    let mut errors = Vec::new();
+    for (target, source) in snapshot.iter().rev() {
+        let result = match source {
+            Some(source) => run_action(*target, Action::Set, Some(source), scope),
+            None => run_action(*target, Action::Reset, None, scope),
+        };
+        if let Err(error) = result {
+            errors.push(format!("rollback {} failed: {error}", target_name(*target)));
+        }
+    }
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(io::Error::other(errors.join("; ")))
+    }
+}
+
+fn source_matches(target: Target, status: &lm::ToolStatus, expected: &str) -> bool {
+    if !status.configured {
+        return false;
+    }
+    if matches!(
+        target,
+        Target::Docker | Target::Buildkit | Target::Containerd | Target::Nerdctl | Target::Podman
+    ) {
+        return status
+            .source
+            .as_deref()
+            .is_some_and(|source| source.trim_end_matches('/') == expected.trim_end_matches('/'));
+    }
+    true
+}
+
+fn verify_applied(target: Target, mirror: &str, scope: Scope) -> io::Result<()> {
+    let mut checked = false;
+    for target in verification_targets(target) {
+        if validate_scope(target, scope).is_err() || !is_installed(target) {
+            continue;
+        }
+        checked = true;
+        let status = inspect_with_expected(target, mirror, scope)?;
+        if !source_matches(target, &status, mirror) {
+            return Err(io::Error::other(format!(
+                "post-write verification failed for {}: configured source is {}",
+                target_name(target),
+                status.source.as_deref().unwrap_or("not configured")
+            )));
+        }
+    }
+    if checked {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!(
+                "{} has no installed target that can be verified",
+                target_name(target)
+            ),
+        ))
+    }
+}
+
 fn execute(
     target: Target,
     action: Action,
@@ -1166,13 +1273,29 @@ fn execute(
         }
         Action::Reset => None,
     };
+    let previous = if action == Action::Set && options.verify && !options.dry_run {
+        snapshot_targets(target, config, options.scope)?
+    } else {
+        Vec::new()
+    };
     let result = execute_resolved(
         target,
         action,
         mirror.as_deref(),
         options.scope,
         options.dry_run,
+        options.verify,
     );
+    let result = match result {
+        Ok(()) => Ok(()),
+        Err(error) if !previous.is_empty() && !options.dry_run => {
+            match restore_snapshot(&previous, options.scope) {
+                Ok(()) => Err(io::Error::other(format!("{error}; changes rolled back"))),
+                Err(rollback) => Err(io::Error::other(format!("{error}; {rollback}"))),
+            }
+        }
+        Err(error) => Err(error),
+    };
     if let Some(cache) = cache {
         cache.save()?;
     }
@@ -1185,6 +1308,7 @@ fn execute_resolved(
     mirror: Option<&str>,
     scope: Scope,
     dry_run: bool,
+    verify: bool,
 ) -> io::Result<()> {
     if dry_run {
         match action {
@@ -1201,6 +1325,9 @@ fn execute_resolved(
         return Ok(());
     }
     run_action(target, action, mirror, scope)?;
+    if verify && action == Action::Set {
+        verify_applied(target, mirror.unwrap_or_default(), scope)?;
+    }
     let verb = match action {
         Action::Set => "set",
         Action::Reset => "reset",
@@ -1306,24 +1433,14 @@ fn execute_all(
             }
             Action::Reset => None,
         };
-        let previous = if options.atomic {
-            let status = inspect(target, config, options.scope)?;
-            if status.configured && status.source.is_none() {
-                return Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    format!(
-                        "{} has no structured previous source; --atomic cannot restore it",
-                        target_name(target)
-                    ),
-                ));
-            }
-            status.source
+        let previous = if (options.atomic || options.verify) && !options.dry_run {
+            snapshot_targets(target, config, options.scope)?
         } else {
-            None
+            Vec::new()
         };
         plan.push((target, mirror, previous));
     }
-    let mut applied: Vec<(Target, Option<String>)> = Vec::new();
+    let mut applied: Vec<(Target, Snapshot)> = Vec::new();
     for (target, mirror, previous) in plan {
         if let Err(error) = execute_resolved(
             target,
@@ -1331,21 +1448,19 @@ fn execute_all(
             mirror.as_deref(),
             options.scope,
             options.dry_run,
+            options.verify,
         ) {
-            if options.atomic && !options.dry_run {
+            if (options.atomic || options.verify) && !options.dry_run {
                 let mut rollback_error = None;
-                for (applied_target, previous) in applied.into_iter().rev() {
-                    let result = match previous {
-                        Some(source) => {
-                            run_action(applied_target, Action::Set, Some(&source), options.scope)
-                        }
-                        None => run_action(applied_target, Action::Reset, None, options.scope),
-                    };
-                    if let Err(rollback) = result {
-                        rollback_error = Some(format!(
-                            "rollback {} failed: {rollback}",
-                            target_name(applied_target)
-                        ));
+                if let Err(rollback) = restore_snapshot(&previous, options.scope) {
+                    rollback_error = Some(rollback.to_string());
+                }
+                for (_, previous) in applied.into_iter().rev() {
+                    if let Err(rollback) = restore_snapshot(&previous, options.scope) {
+                        rollback_error = Some(match rollback_error {
+                            Some(existing) => format!("{existing}; {rollback}"),
+                            None => rollback.to_string(),
+                        });
                     }
                 }
                 return Err(io::Error::other(match rollback_error {
@@ -1355,7 +1470,7 @@ fn execute_all(
             }
             return Err(error);
         }
-        if options.atomic && !options.dry_run {
+        if (options.atomic || options.verify) && !options.dry_run {
             applied.push((target, previous));
         }
     }
@@ -1377,6 +1492,14 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
         } else {
             lm::catalog::resolve(name, None, config)?
         };
+    inspect_with_expected(target, &expected, scope)
+}
+
+fn inspect_with_expected(
+    target: Target,
+    expected: &str,
+    scope: Scope,
+) -> io::Result<lm::ToolStatus> {
     match target {
         Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun | Target::Node => {
             let name = if target == Target::Node {
@@ -1384,39 +1507,39 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
             } else {
                 target_name(target)
             };
-            lm::node::status(name, &expected, scope)
+            lm::node::status(name, expected, scope)
         }
-        Target::Go => lm::go::status(&expected),
+        Target::Go => lm::go::status(expected),
         Target::Pip | Target::Pip3 | Target::Python => {
             let name = if target == Target::Pip3 {
                 "pip3"
             } else {
                 "pip"
             };
-            lm::python::status(name, &expected)
+            lm::python::status(name, expected)
         }
-        Target::Uv => lm::uv::status(&expected, scope),
-        Target::Pdm => lm::pdm::status(&expected),
-        Target::Poetry => lm::poetry::status(&expected, scope),
-        Target::Composer | Target::Php => lm::php::status(&expected),
-        Target::Gem | Target::Ruby => lm::ruby::gem_status(&expected),
-        Target::Bundle => lm::ruby::bundle_status(&expected),
-        Target::Maven | Target::Java => lm::java::maven_status(&expected),
-        Target::Gradle => lm::java::gradle_status(&expected),
-        Target::Sbt => lm::sbt::status(&expected),
-        Target::Cargo | Target::Rust => lm::rust::status(&expected, scope),
+        Target::Uv => lm::uv::status(expected, scope),
+        Target::Pdm => lm::pdm::status(expected),
+        Target::Poetry => lm::poetry::status(expected, scope),
+        Target::Composer | Target::Php => lm::php::status(expected),
+        Target::Gem | Target::Ruby => lm::ruby::gem_status(expected),
+        Target::Bundle => lm::ruby::bundle_status(expected),
+        Target::Maven | Target::Java => lm::java::maven_status(expected),
+        Target::Gradle => lm::java::gradle_status(expected),
+        Target::Sbt => lm::sbt::status(expected),
+        Target::Cargo | Target::Rust => lm::rust::status(expected, scope),
         Target::Docker => lm::docker::status(scope),
         Target::Buildkit => lm::docker::buildkit_status(scope),
         Target::Containerd | Target::Nerdctl => {
             lm::container::containerd_status(target_name(target), scope)
         }
         Target::Podman => lm::container::podman_status(scope),
-        Target::Conda | Target::Mamba => lm::conda::status(target_name(target), &expected),
-        Target::Dart => lm::dart::dart_status(&expected, scope),
-        Target::Flutter => lm::dart::flutter_status(&expected, scope),
+        Target::Conda | Target::Mamba => lm::conda::status(target_name(target), expected),
+        Target::Dart => lm::dart::dart_status(expected, scope),
+        Target::Flutter => lm::dart::flutter_status(expected, scope),
         Target::Nuget | Target::Dotnet => lm::nuget::status(scope),
-        Target::Cran | Target::R => lm::r::status(&expected),
-        Target::Huggingface => lm::huggingface::status(&expected, scope),
+        Target::Cran | Target::R => lm::r::status(expected),
+        Target::Huggingface => lm::huggingface::status(expected, scope),
         Target::Apt => lm::platform::apt_status(scope),
         Target::Apk => lm::platform::apk_status(scope),
         Target::Brew => lm::platform::brew_status(scope),
@@ -1426,25 +1549,25 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
         Target::Cpan => lm::platform::cpan_status(scope),
         Target::Winget => lm::platform::winget_status(scope),
         Target::Opam => lm::platform::opam_status(scope),
-        Target::Rye => lm::platform::env_status("rye", "rye", "RYE_PYPI_MIRROR", &expected, scope),
+        Target::Rye => lm::platform::env_status("rye", "rye", "RYE_PYPI_MIRROR", expected, scope),
         Target::Nvm => {
-            lm::platform::env_status("node", "nvm", "NVM_NODEJS_ORG_MIRROR", &expected, scope)
+            lm::platform::env_status("node", "nvm", "NVM_NODEJS_ORG_MIRROR", expected, scope)
         }
-        Target::Luarocks => lm::platform::luarocks_status(&expected, scope),
-        Target::Clojure => lm::platform::clojure_status(&expected, scope),
+        Target::Luarocks => lm::platform::luarocks_status(expected, scope),
+        Target::Clojure => lm::platform::clojure_status(expected, scope),
         Target::Haskell | Target::Hackage | Target::Cabal => {
-            lm::platform::cabal_status(&expected, scope)
+            lm::platform::cabal_status(expected, scope)
         }
-        Target::Stack => lm::platform::stack_status(&expected, scope),
+        Target::Stack => lm::platform::stack_status(expected, scope),
         Target::Ocaml => lm::platform::opam_status(scope),
-        Target::Cocoapods => lm::platform::cocoapods_status(&expected, scope),
-        Target::Flathub => lm::platform::flatpak_status(&expected, scope),
-        Target::Nix => lm::platform::env_status("nix", "nix", "NIX_CONFIG", &expected, scope),
+        Target::Cocoapods => lm::platform::cocoapods_status(expected, scope),
+        Target::Flathub => lm::platform::flatpak_status(expected, scope),
+        Target::Nix => lm::platform::env_status("nix", "nix", "NIX_CONFIG", expected, scope),
         Target::Guix => {
-            lm::platform::env_status("guix", "guix", "GUIX_SUBSTITUTE_URLS", &expected, scope)
+            lm::platform::env_status("guix", "guix", "GUIX_SUBSTITUTE_URLS", expected, scope)
         }
-        Target::Emacs => lm::platform::emacs_status(&expected, scope),
-        Target::Tex => lm::platform::tex_status(&expected, scope),
+        Target::Emacs => lm::platform::emacs_status(expected, scope),
+        Target::Tex => lm::platform::tex_status(expected, scope),
         target @ (Target::Linuxmint
         | Target::Fedora
         | Target::Opensuse
@@ -2932,6 +3055,11 @@ mod tests {
             target_capabilities(Target::Haskell).commands,
             &["cabal", "stack"]
         );
+        assert_eq!(
+            verification_targets(Target::Python),
+            vec![Target::Pip, Target::Uv, Target::Pdm, Target::Poetry]
+        );
+        assert_eq!(verification_targets(Target::Docker), vec![Target::Docker]);
     }
 
     #[test]

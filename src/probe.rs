@@ -318,10 +318,7 @@ fn curl_seconds_to_milliseconds(value: &str) -> io::Result<u128> {
 fn classify_protocol_response(target: &str, code: &str, content_type: Option<&str>) -> String {
     let state = classify(code);
     if state == "healthy"
-        && matches!(
-            target,
-            "npm" | "pnpm" | "yarn" | "bun" | "conda" | "huggingface" | "nuget"
-        )
+        && crate::catalog::probe_spec(target).response == crate::catalog::ProbeResponse::Json
         && !content_type.is_some_and(|value| value.to_ascii_lowercase().contains("json"))
     {
         "invalid-response".to_owned()
@@ -413,29 +410,15 @@ fn target_url(target: &str, url: &str) -> String {
         url
     };
     let url = url.trim_end_matches('/');
-    let suffix = match target {
-        "apt" => format!("/dists/{}/Release", crate::platform::apt_distribution()),
-        "npm" | "pnpm" | "yarn" | "bun" => "/-/ping".to_owned(),
-        "pip" | "uv" | "pdm" | "poetry" => "/simple/".to_owned(),
-        "docker" | "buildkit" | "containerd" | "podman" => "/v2/".to_owned(),
-        "conda" => "/pkgs/main/repodata.json".to_owned(),
-        "cran" => "/src/contrib/PACKAGES".to_owned(),
-        "ros" => format!(
-            "/dists/{}/Release",
-            std::env::var("LM_ROS_DISTRIBUTION")
-                .or_else(|_| std::env::var("ROS_DISTRO"))
-                .unwrap_or_else(|_| crate::platform::apt_distribution())
-        ),
-        "huggingface" => "/api/models?limit=1".to_owned(),
-        "nuget" => "/v3/index.json".to_owned(),
-        "apk" => "/latest-stable/main/x86_64/APKINDEX.tar.gz".to_owned(),
-        "rustup" => "/dist/channel-rust-stable.toml".to_owned(),
-        "cpan" => "/modules/02packages.details.txt.gz".to_owned(),
-        "luarocks" => "/manifest".to_owned(),
-        "hackage" | "cabal" | "stack" => "/01-index.tar.gz".to_owned(),
-        "flathub" => "/summary".to_owned(),
-        _ => String::new(),
+    let probe = crate::catalog::probe_spec(target);
+    let distribution = if target == "ros" {
+        std::env::var("LM_ROS_DISTRIBUTION")
+            .or_else(|_| std::env::var("ROS_DISTRO"))
+            .unwrap_or_else(|_| crate::platform::apt_distribution())
+    } else {
+        crate::platform::apt_distribution()
     };
+    let suffix = probe.suffix.replace("{distribution}", &distribution);
     let query_start = url.find(['?', '#']).unwrap_or(url.len());
     let (base, query) = url.split_at(query_start);
     let base = base.trim_end_matches('/');

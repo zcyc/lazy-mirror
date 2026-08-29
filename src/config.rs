@@ -708,9 +708,23 @@ fn platform_default_path() -> io::Result<PathBuf> {
 
 fn discovered_paths(primary: &Path) -> io::Result<Vec<PathBuf>> {
     let mut paths = vec![system_config_path(), primary.to_owned()];
-    paths.push(env::current_dir()?.join(".lazy-mirror/config.toml"));
+    paths.push(project_config_path(&env::current_dir()?));
     paths.dedup();
     Ok(paths)
+}
+
+fn project_config_path(start: &Path) -> PathBuf {
+    let mut directory = start;
+    loop {
+        let candidate = directory.join(".lazy-mirror/config.toml");
+        if candidate.is_file() {
+            return candidate;
+        }
+        let Some(parent) = directory.parent() else {
+            return start.join(".lazy-mirror/config.toml");
+        };
+        directory = parent;
+    }
 }
 
 #[cfg(windows)]
@@ -870,5 +884,29 @@ mod tests {
         assert!(config.sources().iter().all(|source| source.loaded));
         fs::remove_file(lower).unwrap();
         fs::remove_file(upper).unwrap();
+    }
+
+    #[test]
+    fn project_config_uses_the_nearest_parent() {
+        let root = env::temp_dir().join(format!(
+            "lm-config-project-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let nested = root.join("packages/example");
+        fs::create_dir_all(&nested).unwrap();
+        fs::create_dir_all(root.join(".lazy-mirror")).unwrap();
+        let root_config = root.join(".lazy-mirror/config.toml");
+        fs::write(&root_config, "[defaults]\npip = \"tuna\"\n").unwrap();
+        assert_eq!(project_config_path(&nested), root_config);
+
+        let nested_config = nested.join(".lazy-mirror/config.toml");
+        fs::create_dir_all(nested_config.parent().unwrap()).unwrap();
+        fs::write(&nested_config, "[defaults]\npip = \"ustc\"\n").unwrap();
+        assert_eq!(project_config_path(&nested), nested_config);
+        fs::remove_dir_all(root).unwrap();
     }
 }

@@ -48,18 +48,19 @@ eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境�
 `measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
 `--only-installed`、`--parallelism 1..64`、`--ipv4` 和 `--ipv6`；IP 选项互斥，默认自动选择。
 `get`、`plan` 也支持 `--only-installed`。
-`set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前进行协议探测；两者可同时使用。
+`set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前探测、写入后复核实际配置；复核失败会尝试恢复写入前状态。
+对 Node/Python/JVM/Rust/Dart/Haskell 等组合目标，复核会检查本次实际修改的每个已安装成员。
 `set all`/`reset all` 默认跳过未安装或当前作用域不支持的目标；需要全量原子执行时使用
 `set all --atomic`，它会对未安装目标直接失败。
 命令别名为：`ls/l`、`m/cesu`、`verify`、`g`、`s`、`r`。
 
 ## TOML 配置
 
-未指定 `--config` 且未设置 `LM_CONFIG` 时，按系统 → 用户 → 当前项目的顺序读取配置，后者
+未指定 `--config` 且未设置 `LM_CONFIG` 时，按系统 → 用户 → 项目配置的顺序读取配置，后者
 覆盖前者：系统为 `/etc/lazy-mirror/config.toml`（Windows 为
 `C:\ProgramData\lazy-mirror\config.toml`），用户为 `$XDG_CONFIG_HOME/lazy-mirror/config.toml`
-（macOS 通常是 `~/Library/Application Support/lazy-mirror/config.toml`），项目为
-`.lazy-mirror/config.toml`。`LM_CONFIG` 或 `--config FILE` 会改为只读取指定文件；
+（macOS 通常是 `~/Library/Application Support/lazy-mirror/config.toml`），项目配置为当前目录
+或最近父目录中的 `.lazy-mirror/config.toml`。`LM_CONFIG` 或 `--config FILE` 会改为只读取指定文件；
 `--no-config` 完全跳过读取。`lm config sources` 显示路径、是否启用和是否成功加载。
 `config show --format json` 与 `get --explain` 会标出配置项最终来源文件。
 
