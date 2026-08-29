@@ -641,7 +641,8 @@ fn is_config_mirror_url(value: &str) -> bool {
 }
 
 fn redactable_url(value: &str) -> bool {
-    is_url(value) || value.strip_prefix("sparse+").is_some_and(is_url)
+    let value = value.strip_prefix("sparse+").unwrap_or(value);
+    value.starts_with("http://") || value.starts_with("https://")
 }
 
 pub fn redact_selection(value: &str) -> String {
@@ -892,6 +893,18 @@ mod tests {
         assert_eq!(
             redact_url("sparse+https://mirror.example/index?token=secret"),
             "sparse+https://mirror.example/index"
+        );
+    }
+
+    #[test]
+    fn invalid_url_selections_are_still_redacted() {
+        assert_eq!(
+            redact_selection("https://user:secret@example.com/index?token=secret"),
+            "https://example.com/index"
+        );
+        assert_eq!(
+            redact_selection("sparse+https://user:secret@example.com/index?token=secret"),
+            "sparse+https://example.com/index"
         );
     }
 

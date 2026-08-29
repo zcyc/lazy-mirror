@@ -209,7 +209,10 @@ fn validate_mirror(mirror: &str) -> io::Result<String> {
     if !valid_root {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("Docker mirror must be an HTTP(S) root URL without a path: {mirror}"),
+            format!(
+                "Docker mirror must be an HTTP(S) root URL without a path: {}",
+                crate::config::redact_selection(mirror)
+            ),
         ));
     }
     Ok(mirror.to_owned())
@@ -692,6 +695,16 @@ mod tests {
         assert!(validate_mirror("https://mirror.example/").is_ok());
         assert!(validate_mirror("https://mirror.example/v2").is_err());
         assert!(validate_mirror("https://mirror.example?token=x").is_err());
+    }
+
+    #[test]
+    fn invalid_mirror_errors_do_not_leak_url_secrets() {
+        let error = validate_mirror("https://user:secret@mirror.example?token=secret")
+            .unwrap_err()
+            .to_string();
+        assert!(!error.contains("user:secret"));
+        assert!(!error.contains("token=secret"));
+        assert!(error.contains("https://mirror.example"));
     }
 
     #[test]
