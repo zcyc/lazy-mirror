@@ -17,10 +17,11 @@ lm list mirror --format json   # 列出镜像和 URL
 lm measure docker               # 并发检测镜像并显示 HTTP 状态/耗时
 lm check docker --format json  # 按 Docker Registry API 路径校验
 lm get go                      # 查看当前配置、实际 source 和作用域
+lm get pip --explain           # 解释配置来源、mirror 池和 adapter 路径
 lm get all --format json
 lm get all --only-installed
 lm get pip --all-scopes       # 查看各作用域的配置
-lm doctor all --only-installed  # 检查工具、配置和 mirror
+lm doctor all --only-installed --explain  # 检查工具、配置和 mirror，并解释来源
 lm plan docker daocloud         # 显示将要修改的路径和目标值
 lm diff docker daocloud --format json
 lm set pip --best --verify     # 选择最快可用源并在写入前复核
@@ -34,6 +35,7 @@ lm set docker https://mirror.example.com
 lm set cargo rsproxy --scope project --dry-run
 lm set all --atomic             # 可回滚 adapter 的全量修改
 lm reset docker
+eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境变量
 ```
 
 `list`、`measure`、`check`、`get` 支持 `--format table|json`；JSON 记录包含
@@ -76,6 +78,15 @@ parallelism = 4
 可让 `all` 跳过目标。配置只接受 `mirrors`、`defaults`、`targets`、`options` 四个顶层
 区块，错误会直接返回，不会静默降级。
 
+`targets.<name>.mirrors` 可定义该目标用于 `measure`、`--best` 的候选池；候选项可以是内置
+镜像名、`[mirrors]` 名称或 URL。未配置候选池时使用该目标的全部内置镜像，并追加默认配置源。
+
+```toml
+[targets.pip]
+default = "company"
+mirrors = ["company", "tuna", "https://pypi.example.com/simple"]
+```
+
 ## 检查与安全
 
 `check` 按工具协议探测：Docker 使用 `/v2/`，Python 使用 `/simple/`，NuGet 使用
@@ -109,7 +120,8 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 | 软件/桌面 | Homebrew、WinGet、CocoaPods、Flathub/Flatpak、Nix、Guix、Emacs/ELPA、TeX/CTAN |
 | 容器 | Docker Engine、containerd/nerdctl、Podman |
 
-Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN 使用受管 shell 环境变量块；
+Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN、Rye、nvm、Nix、Guix 使用受管
+shell 环境变量块；`lm env` 可只输出变量而不修改文件，支持 sh、fish、PowerShell。
 项目作用域写入 `.env`，用户作用域默认写入 `.profile`，也可用 `LM_SHELL_PROFILE` 指定。
 Cargo 和 uv 使用 TOML 结构化合并，Docker 使用 JSON 合并。
 

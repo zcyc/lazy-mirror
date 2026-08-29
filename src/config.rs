@@ -46,6 +46,7 @@ impl Default for Settings {
 struct TargetConfig {
     default: Option<String>,
     enabled: bool,
+    mirrors: Option<Vec<String>>,
 }
 
 impl Config {
@@ -111,7 +112,7 @@ impl Config {
                 ));
             }
         }
-        validate_references(&defaults, &mirrors)?;
+        validate_references(&defaults, &targets, &mirrors)?;
         Ok(Self {
             path,
             mirrors,
@@ -139,6 +140,13 @@ impl Config {
         self.targets.get(target).is_none_or(|target| target.enabled)
     }
 
+    pub fn mirrors_for(&self, target: &str) -> Option<&[String]> {
+        let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
+        self.targets
+            .get(target)
+            .and_then(|target| target.mirrors.as_deref())
+    }
+
     pub fn settings(&self) -> Settings {
         self.settings
     }
@@ -161,11 +169,24 @@ impl Config {
                         value.clone()
                     }
                 });
+                let mirrors = target.mirrors.as_ref().map(|items| {
+                    items
+                        .iter()
+                        .map(|value| {
+                            if is_url(value) {
+                                redact_url(value)
+                            } else {
+                                value.clone()
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                });
                 (
                     name.clone(),
                     serde_json::json!({
                         "default": default,
                         "enabled": target.enabled,
+                        "mirrors": mirrors,
                     }),
                 )
             })
@@ -218,6 +239,7 @@ fn canonical_target(name: &str) -> io::Result<String> {
 
 fn validate_references(
     defaults: &BTreeMap<String, String>,
+    targets: &BTreeMap<String, TargetConfig>,
     mirrors: &BTreeMap<String, String>,
 ) -> io::Result<()> {
     for (target, selection) in defaults {
@@ -227,18 +249,43 @@ fn validate_references(
                 format!("unknown target {target} in TOML configuration"),
             )
         })?;
-        let valid = is_url(selection)
-            || mirrors.contains_key(selection)
-            || (selection == "first" && !spec.mirrors.is_empty())
-            || spec.mirrors.iter().any(|mirror| mirror.name == selection);
-        if !valid {
-            return Err(io::Error::new(
+        validate_selection(target, selection, spec, mirrors)?;
+    }
+    for (target, settings) in targets {
+        let Some(selections) = &settings.mirrors else {
+            continue;
+        };
+        let spec = crate::catalog::find(target).ok_or_else(|| {
+            io::Error::new(
                 io::ErrorKind::InvalidData,
-                format!("unknown mirror {selection} for target {target}"),
-            ));
+                format!("unknown target {target} in TOML configuration"),
+            )
+        })?;
+        for selection in selections {
+            validate_selection(target, selection, spec, mirrors)?;
         }
     }
     Ok(())
+}
+
+fn validate_selection(
+    target: &str,
+    selection: &str,
+    spec: &crate::catalog::TargetSpec,
+    mirrors: &BTreeMap<String, String>,
+) -> io::Result<()> {
+    let valid = is_url(selection)
+        || mirrors.contains_key(selection)
+        || (selection == "first" && !spec.mirrors.is_empty())
+        || spec.mirrors.iter().any(|mirror| mirror.name == selection);
+    if valid {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("unknown mirror {selection} for target {target}"),
+        ))
+    }
 }
 
 fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetConfig>> {
@@ -260,6 +307,7 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
                     TargetConfig {
                         default: Some(default.to_owned()),
                         enabled: true,
+                        mirrors: None,
                     },
                 ));
             }
@@ -270,7 +318,7 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
                 )
             })?;
             for field in target.keys() {
-                if !matches!(field.as_str(), "default" | "enabled") {
+                if !matches!(field.as_str(), "default" | "enabled" | "mirrors") {
                     return Err(io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("unknown field [targets.{key}].{field}"),
@@ -296,7 +344,42 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
                     )
                 })
             })?;
-            Ok((key.clone(), TargetConfig { default, enabled }))
+            let mirrors = target
+                .get("mirrors")
+                .map(|value| {
+                    let values = value.as_array().ok_or_else(|| {
+                        io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("TOML field [targets.{key}].mirrors must be an array of strings"),
+                        )
+                    })?;
+                    if values.is_empty() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            format!("TOML field [targets.{key}].mirrors cannot be empty"),
+                        ));
+                    }
+                    values
+                        .iter()
+                        .map(|value| {
+                            value.as_str().map(str::to_owned).ok_or_else(|| {
+                                io::Error::new(
+                                    io::ErrorKind::InvalidData,
+                                    format!("TOML field [targets.{key}].mirrors must be an array of strings"),
+                                )
+                            })
+                        })
+                        .collect()
+                })
+                .transpose()?;
+            Ok((
+                key.clone(),
+                TargetConfig {
+                    default,
+                    enabled,
+                    mirrors,
+                },
+            ))
         })
         .collect()
 }
@@ -497,12 +580,16 @@ mod tests {
         let path = env::temp_dir().join(format!("lm-config-options-{}.toml", std::process::id()));
         fs::write(
             &path,
-            "[mirrors]\ncorp = \"https://mirror.example/simple\"\n[targets.pip]\ndefault = \"corp\"\nenabled = false\n[options]\ntimeout_seconds = 3\nretries = 2\ncache_ttl_seconds = 60\nparallelism = 2\n",
+            "[mirrors]\ncorp = \"https://mirror.example/simple\"\n[targets.pip]\ndefault = \"corp\"\nenabled = false\nmirrors = [\"corp\", \"tuna\"]\n[options]\ntimeout_seconds = 3\nretries = 2\ncache_ttl_seconds = 60\nparallelism = 2\n",
         )
         .unwrap();
         let config = Config::load(Some(&path)).unwrap();
         assert_eq!(config.default_for("pip"), Some("corp"));
         assert!(!config.enabled("pip"));
+        assert_eq!(
+            config.mirrors_for("pip"),
+            Some(["corp".to_owned(), "tuna".to_owned()].as_slice())
+        );
         assert_eq!(config.settings().timeout_seconds, 3);
         assert_eq!(config.settings().retries, 2);
         assert_eq!(config.settings().cache_ttl_seconds, 60);

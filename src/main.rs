@@ -82,6 +82,8 @@ enum Commands {
         only_installed: bool,
         #[arg(long, conflicts_with = "scope")]
         all_scopes: bool,
+        #[arg(long)]
+        explain: bool,
     },
     #[command(about = "Set a source, mirror name, or URL", visible_alias = "s")]
     Set {
@@ -116,6 +118,13 @@ enum Commands {
         #[arg(value_enum)]
         shell: CompletionShell,
     },
+    #[command(about = "Print mirror environment assignments for the current shell")]
+    Env {
+        target: Target,
+        mirror: Option<String>,
+        #[arg(long, value_enum, default_value = "sh")]
+        shell: EnvShell,
+    },
     #[command(about = "Check tools, configuration and selected mirror")]
     Doctor {
         target: Target,
@@ -132,6 +141,8 @@ enum Commands {
         only_installed: bool,
         #[arg(long)]
         parallelism: Option<usize>,
+        #[arg(long)]
+        explain: bool,
     },
     #[command(about = "Show the exact source change plan", visible_alias = "diff")]
     Plan {
@@ -173,6 +184,14 @@ enum OutputFormat {
 enum CompletionShell {
     Bash,
     Zsh,
+    Fish,
+    Powershell,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "lower")]
+enum EnvShell {
+    Sh,
     Fish,
     Powershell,
 }
@@ -430,6 +449,148 @@ struct ExecuteOptions {
     scope: Scope,
     dry_run: bool,
     atomic: bool,
+}
+
+#[derive(Clone, Copy)]
+struct TargetCapabilities {
+    project: bool,
+    user: bool,
+    system: bool,
+    atomic: bool,
+    commands: &'static [&'static str],
+}
+
+impl TargetCapabilities {
+    const fn new(
+        project: bool,
+        user: bool,
+        system: bool,
+        atomic: bool,
+        commands: &'static [&'static str],
+    ) -> Self {
+        Self {
+            project,
+            user,
+            system,
+            atomic,
+            commands,
+        }
+    }
+
+    fn supports(self, scope: Scope) -> bool {
+        match scope {
+            Scope::Project => self.project,
+            Scope::User => self.user,
+            Scope::System => self.system,
+        }
+    }
+}
+
+fn target_capabilities(target: Target) -> TargetCapabilities {
+    match target {
+        Target::Npm => TargetCapabilities::new(true, true, false, false, &["npm"]),
+        Target::Pnpm => TargetCapabilities::new(true, true, false, false, &["pnpm"]),
+        Target::Yarn => TargetCapabilities::new(true, true, false, false, &["yarn"]),
+        Target::Bun => TargetCapabilities::new(true, true, false, false, &["bun"]),
+        Target::Node => {
+            TargetCapabilities::new(true, true, false, false, &["npm", "pnpm", "yarn", "bun"])
+        }
+        Target::Go => TargetCapabilities::new(false, true, false, false, &["go"]),
+        Target::Pip => TargetCapabilities::new(false, true, false, false, &["pip"]),
+        Target::Pip3 => TargetCapabilities::new(false, true, false, false, &["pip3"]),
+        Target::Python => {
+            TargetCapabilities::new(false, true, false, false, &["pip", "uv", "pdm", "poetry"])
+        }
+        Target::Uv => TargetCapabilities::new(true, true, false, true, &["uv"]),
+        Target::Pdm => TargetCapabilities::new(false, true, false, false, &["pdm"]),
+        Target::Poetry => TargetCapabilities::new(true, true, false, false, &["poetry"]),
+        Target::Composer | Target::Php => {
+            TargetCapabilities::new(false, true, false, false, &["composer"])
+        }
+        Target::Gem | Target::Bundle | Target::Ruby => {
+            TargetCapabilities::new(false, true, false, false, &["gem"])
+        }
+        Target::Maven => TargetCapabilities::new(false, true, false, true, &["mvn"]),
+        Target::Gradle => TargetCapabilities::new(false, true, false, true, &["gradle"]),
+        Target::Sbt => TargetCapabilities::new(false, true, false, true, &["sbt"]),
+        Target::Java => {
+            TargetCapabilities::new(false, true, false, true, &["mvn", "gradle", "sbt"])
+        }
+        Target::Cargo => TargetCapabilities::new(true, true, true, true, &["cargo"]),
+        Target::Rust => TargetCapabilities::new(true, true, true, true, &["cargo", "rustup"]),
+        Target::Docker => TargetCapabilities::new(false, true, true, true, &["docker"]),
+        Target::Containerd | Target::Nerdctl => {
+            TargetCapabilities::new(false, true, true, true, &["containerd", "nerdctl"])
+        }
+        Target::Podman => TargetCapabilities::new(false, true, true, true, &["podman"]),
+        Target::Conda => TargetCapabilities::new(false, true, false, false, &["conda"]),
+        Target::Mamba => TargetCapabilities::new(false, true, false, false, &["mamba"]),
+        Target::Dart => TargetCapabilities::new(true, true, true, true, &["dart", "flutter"]),
+        Target::Flutter => TargetCapabilities::new(true, true, true, true, &["flutter"]),
+        Target::Nuget | Target::Dotnet => {
+            TargetCapabilities::new(true, true, false, false, &["dotnet"])
+        }
+        Target::Cran | Target::R => TargetCapabilities::new(false, true, false, true, &["R"]),
+        Target::Huggingface => {
+            TargetCapabilities::new(true, true, true, true, &["hf", "huggingface-cli"])
+        }
+        Target::Apt => TargetCapabilities::new(false, false, true, true, &["apt"]),
+        Target::Apk => TargetCapabilities::new(false, false, true, true, &["apk"]),
+        Target::Brew => TargetCapabilities::new(true, true, true, true, &["brew"]),
+        Target::Rustup => TargetCapabilities::new(true, true, true, true, &["rustup"]),
+        Target::Hex => TargetCapabilities::new(false, true, false, false, &["mix"]),
+        Target::Julia => TargetCapabilities::new(true, true, true, true, &["julia"]),
+        Target::Cpan => TargetCapabilities::new(true, true, true, true, &["cpan"]),
+        Target::Winget => TargetCapabilities::new(false, true, false, false, &["winget"]),
+        Target::Opam => TargetCapabilities::new(false, true, false, false, &["opam"]),
+        Target::Rye => TargetCapabilities::new(true, true, false, true, &["rye"]),
+        Target::Nvm => TargetCapabilities::new(true, true, false, true, &["node"]),
+        Target::Luarocks => TargetCapabilities::new(true, true, true, true, &["luarocks"]),
+        Target::Clojure => TargetCapabilities::new(true, true, true, true, &["clojure"]),
+        Target::Haskell => TargetCapabilities::new(true, true, true, true, &["cabal", "stack"]),
+        Target::Hackage | Target::Cabal => {
+            TargetCapabilities::new(true, true, true, true, &["cabal"])
+        }
+        Target::Stack => TargetCapabilities::new(true, true, true, true, &["stack"]),
+        Target::Ocaml => TargetCapabilities::new(false, true, false, false, &["opam"]),
+        Target::Cocoapods => TargetCapabilities::new(false, true, false, false, &["pod"]),
+        Target::Flathub => TargetCapabilities::new(false, true, false, false, &["flatpak"]),
+        Target::Nix => TargetCapabilities::new(false, true, true, true, &["nix"]),
+        Target::Guix => TargetCapabilities::new(false, true, true, true, &["guix"]),
+        Target::Emacs => TargetCapabilities::new(false, true, false, true, &["emacs"]),
+        Target::Tex => TargetCapabilities::new(false, true, false, false, &["tlmgr"]),
+        Target::Linuxmint
+        | Target::Kali
+        | Target::Trisquel
+        | Target::Linuxlite
+        | Target::Raspi
+        | Target::Armbian
+        | Target::Deepin => TargetCapabilities::new(false, false, true, true, &["apt"]),
+        Target::Fedora | Target::Rocky | Target::Alma | Target::Openeuler | Target::Openanolis => {
+            TargetCapabilities::new(false, false, true, true, &["dnf", "yum"])
+        }
+        Target::Opensuse => TargetCapabilities::new(false, false, true, true, &["zypper"]),
+        Target::Arch | Target::Archlinuxcn | Target::Manjaro | Target::Msys2 => {
+            TargetCapabilities::new(
+                false,
+                target == Target::Msys2,
+                target != Target::Msys2,
+                false,
+                &["pacman"],
+            )
+        }
+        Target::Gentoo => TargetCapabilities::new(false, false, true, true, &["emerge"]),
+        Target::Voidlinux => TargetCapabilities::new(false, false, true, true, &["xbps-install"]),
+        Target::Solus => TargetCapabilities::new(false, false, true, true, &["eopkg"]),
+        Target::Ros => TargetCapabilities::new(false, false, true, true, &["apt"]),
+        Target::Openwrt => TargetCapabilities::new(false, false, true, true, &["opkg"]),
+        Target::Openkylin => TargetCapabilities::new(false, false, true, true, &["apt"]),
+        Target::Termux => TargetCapabilities::new(false, true, false, false, &["pkg"]),
+        Target::Freebsd => TargetCapabilities::new(false, true, false, false, &["pkg"]),
+        Target::Openbsd => TargetCapabilities::new(false, true, false, false, &["pkg_add"]),
+        Target::Netbsd => TargetCapabilities::new(false, true, false, false, &["pkgin"]),
+        Target::All => TargetCapabilities::new(false, false, false, false, &[]),
+    }
 }
 
 fn target_name(target: Target) -> &'static str {
@@ -880,7 +1041,7 @@ fn select_mirror(
         return lm::catalog::resolve(catalog_name(target), selector, config);
     }
     let cache = cache.ok_or_else(|| io::Error::other("best mirror selection requires a cache"))?;
-    let mut candidates = measure_one(
+    let candidates = measure_one(
         target,
         None,
         config,
@@ -889,18 +1050,6 @@ fn select_mirror(
     )?
     .into_iter()
     .collect::<Vec<_>>();
-    if config.default_for(catalog_name(target)).is_some() {
-        let url = lm::catalog::resolve(catalog_name(target), None, config)?;
-        if !candidates.iter().any(|record| record.url == url) {
-            candidates.extend(measure_one(
-                target,
-                Some(&url),
-                config,
-                cache,
-                Some(config.settings().parallelism),
-            )?);
-        }
-    }
     fastest_mirror(candidates).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -1008,87 +1157,7 @@ fn execute_resolved(
 }
 
 fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
-    let supported = match scope {
-        Scope::User => !is_system_os(target),
-        Scope::Project => matches!(
-            target,
-            Target::Npm
-                | Target::Pnpm
-                | Target::Yarn
-                | Target::Bun
-                | Target::Node
-                | Target::Uv
-                | Target::Poetry
-                | Target::Cargo
-                | Target::Rust
-                | Target::Dart
-                | Target::Flutter
-                | Target::Huggingface
-                | Target::Nuget
-                | Target::Dotnet
-                | Target::Brew
-                | Target::Rustup
-                | Target::Julia
-                | Target::Cpan
-                | Target::Rye
-                | Target::Nvm
-                | Target::Luarocks
-                | Target::Clojure
-                | Target::Haskell
-                | Target::Hackage
-                | Target::Cabal
-                | Target::Stack
-        ),
-        Scope::System => matches!(
-            target,
-            Target::Cargo
-                | Target::Rust
-                | Target::Dart
-                | Target::Flutter
-                | Target::Huggingface
-                | Target::Docker
-                | Target::Containerd
-                | Target::Nerdctl
-                | Target::Podman
-                | Target::Apt
-                | Target::Apk
-                | Target::Brew
-                | Target::Rustup
-                | Target::Julia
-                | Target::Cpan
-                | Target::Nix
-                | Target::Guix
-                | Target::Luarocks
-                | Target::Clojure
-                | Target::Haskell
-                | Target::Hackage
-                | Target::Cabal
-                | Target::Stack
-                | Target::Linuxmint
-                | Target::Fedora
-                | Target::Opensuse
-                | Target::Kali
-                | Target::Arch
-                | Target::Archlinuxcn
-                | Target::Manjaro
-                | Target::Gentoo
-                | Target::Rocky
-                | Target::Alma
-                | Target::Voidlinux
-                | Target::Solus
-                | Target::Ros
-                | Target::Trisquel
-                | Target::Linuxlite
-                | Target::Raspi
-                | Target::Armbian
-                | Target::Openwrt
-                | Target::Openeuler
-                | Target::Openanolis
-                | Target::Openkylin
-                | Target::Deepin
-        ),
-    };
-    if supported {
+    if target_capabilities(target).supports(scope) {
         Ok(())
     } else {
         Err(io::Error::new(
@@ -1096,36 +1165,6 @@ fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
             format!("{} does not support {scope:?} scope", target_name(target)),
         ))
     }
-}
-
-fn is_system_os(target: Target) -> bool {
-    matches!(
-        target,
-        Target::Apt
-            | Target::Apk
-            | Target::Linuxmint
-            | Target::Fedora
-            | Target::Opensuse
-            | Target::Kali
-            | Target::Arch
-            | Target::Archlinuxcn
-            | Target::Manjaro
-            | Target::Gentoo
-            | Target::Rocky
-            | Target::Alma
-            | Target::Voidlinux
-            | Target::Solus
-            | Target::Ros
-            | Target::Trisquel
-            | Target::Linuxlite
-            | Target::Raspi
-            | Target::Armbian
-            | Target::Openwrt
-            | Target::Openeuler
-            | Target::Openanolis
-            | Target::Openkylin
-            | Target::Deepin
-    )
 }
 
 fn execute_all(
@@ -1266,64 +1305,7 @@ fn execute_all(
 }
 
 fn atomic_supported(target: Target) -> bool {
-    matches!(
-        target,
-        Target::Uv
-            | Target::Cargo
-            | Target::Rust
-            | Target::Docker
-            | Target::Containerd
-            | Target::Nerdctl
-            | Target::Podman
-            | Target::Maven
-            | Target::Java
-            | Target::Gradle
-            | Target::Sbt
-            | Target::Dart
-            | Target::Flutter
-            | Target::Huggingface
-            | Target::Apt
-            | Target::Apk
-            | Target::Brew
-            | Target::Rustup
-            | Target::Julia
-            | Target::Cpan
-            | Target::Cran
-            | Target::R
-            | Target::Rye
-            | Target::Nvm
-            | Target::Luarocks
-            | Target::Clojure
-            | Target::Haskell
-            | Target::Hackage
-            | Target::Cabal
-            | Target::Stack
-            | Target::Nix
-            | Target::Guix
-            | Target::Emacs
-            | Target::Linuxmint
-            | Target::Fedora
-            | Target::Opensuse
-            | Target::Kali
-            | Target::Arch
-            | Target::Archlinuxcn
-            | Target::Manjaro
-            | Target::Gentoo
-            | Target::Rocky
-            | Target::Alma
-            | Target::Voidlinux
-            | Target::Solus
-            | Target::Ros
-            | Target::Trisquel
-            | Target::Linuxlite
-            | Target::Raspi
-            | Target::Armbian
-            | Target::Openwrt
-            | Target::Openeuler
-            | Target::Openanolis
-            | Target::Openkylin
-            | Target::Deepin
-    )
+    target_capabilities(target).atomic
 }
 
 fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::ToolStatus> {
@@ -1466,6 +1448,7 @@ fn get(
     format: OutputFormat,
     only_installed: bool,
     all_scopes: bool,
+    explain: bool,
 ) -> io::Result<()> {
     let targets: &[Target] = if target == Target::All {
         ALL_TARGETS
@@ -1488,7 +1471,23 @@ fn get(
     }
     if format == OutputFormat::Json {
         print_json(&serde_json::Value::Array(
-            records.iter().map(status_json).collect(),
+            records
+                .iter()
+                .map(|record| {
+                    let mut value = status_json(record);
+                    if explain {
+                        value["explanation"] = explanation_json(
+                            lm::catalog::find(&record.target)
+                                .map_or(record.target.as_str(), |spec| spec.name),
+                            None,
+                            config,
+                            scope_from_name(&record.scope),
+                            record,
+                        );
+                    }
+                    value
+                })
+                .collect(),
         ))?;
     } else {
         for record in &records {
@@ -1506,6 +1505,16 @@ fn get(
                     record.version.as_deref().unwrap_or_default(),
                     record.detail.as_deref().unwrap_or_default()
                 );
+            }
+            if explain {
+                print_explanation(explanation_json(
+                    lm::catalog::find(&record.target)
+                        .map_or(record.target.as_str(), |spec| spec.name),
+                    None,
+                    config,
+                    scope_from_name(&record.scope),
+                    record,
+                ));
             }
         }
     }
@@ -1617,6 +1626,7 @@ fn doctor(
     config: &Config,
     scope: Scope,
     options: ProbeOptions,
+    explain: bool,
 ) -> io::Result<()> {
     validate_parallelism(options.parallelism)?;
     let targets: &[Target] = if target == Target::All {
@@ -1651,7 +1661,7 @@ fn doctor(
             .error
             .clone()
             .or_else(|| desired.as_ref().err().map(std::string::ToString::to_string));
-        records.push(serde_json::json!({
+        let mut record = serde_json::json!({
             "schema": lm::JSON_SCHEMA,
             "target": target_name(target),
             "installed": is_installed(target),
@@ -1663,7 +1673,12 @@ fn doctor(
             "latency_ms": health.as_ref().and_then(|record| record.milliseconds),
             "health_usable": health.as_ref().is_some_and(probe_is_usable),
             "error": error,
-        }));
+        });
+        if explain {
+            record["explanation"] =
+                explanation_json(catalog_name(target), selector, config, scope, &status);
+        }
+        records.push(record);
     }
     cache.save()?;
     if options.format == OutputFormat::Json {
@@ -1681,6 +1696,9 @@ fn doctor(
                 record["health"].as_str().unwrap_or("not checked"),
                 record["error"].as_str().unwrap_or("ok")
             );
+            if explain {
+                print_explanation(record["explanation"].clone());
+            }
         }
     }
     if !records.is_empty()
@@ -1702,6 +1720,89 @@ fn scope_name(scope: Scope) -> &'static str {
         Scope::User => "user",
         Scope::System => "system",
     }
+}
+
+fn scope_from_name(scope: &str) -> Scope {
+    match scope {
+        "project" => Scope::Project,
+        "system" => Scope::System,
+        _ => Scope::User,
+    }
+}
+
+fn explanation_json(
+    target: &str,
+    selector: Option<&str>,
+    config: &Config,
+    scope: Scope,
+    status: &StatusRecord,
+) -> serde_json::Value {
+    let default = config.default_for(target).map(redact_selection);
+    let mirrors = config
+        .mirrors_for(target)
+        .map(|items| {
+            items
+                .iter()
+                .map(|item| redact_selection(item))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    serde_json::json!({
+        "config": config.path,
+        "target": target,
+        "enabled": config.enabled(target),
+        "scope": scope_name(scope),
+        "requested_selector": selector.map(redact_selection),
+        "configured_default": default,
+        "mirror_pool": mirrors,
+        "selection_order": [
+            "CLI selector",
+            "[defaults]",
+            "[targets.<target>].default",
+            "built-in first mirror",
+        ],
+        "adapter": {
+            "path": status.path,
+            "source": status.source,
+            "detail": status.detail,
+            "error": status.error,
+        },
+    })
+}
+
+fn redact_selection(value: &str) -> String {
+    if config_url(value) {
+        redact_url(value)
+    } else {
+        value.to_owned()
+    }
+}
+
+fn config_url(value: &str) -> bool {
+    value.starts_with("http://") || value.starts_with("https://")
+}
+
+fn print_explanation(value: serde_json::Value) {
+    let config = value["config"].as_str().unwrap_or_default();
+    let target = value["target"].as_str().unwrap_or_default();
+    let scope = value["scope"].as_str().unwrap_or_default();
+    let default = value["configured_default"].as_str().unwrap_or("none");
+    let pool = value["mirror_pool"]
+        .as_array()
+        .map(|items| {
+            items
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(",")
+        })
+        .unwrap_or_default();
+    let adapter = value["adapter"]["path"]
+        .as_str()
+        .unwrap_or("external command");
+    println!(
+        "  explain: target={target} scope={scope} config={config} default={default} pool=[{pool}] adapter={adapter}"
+    );
 }
 
 fn validate_parallelism(parallelism: Option<usize>) -> io::Result<()> {
@@ -1865,84 +1966,10 @@ fn target_category(target: &str) -> &'static str {
 }
 
 fn is_installed(target: Target) -> bool {
-    command_candidates(target)
+    target_capabilities(target)
+        .commands
         .iter()
         .any(|command| lm::command_exists(command))
-}
-
-fn command_candidates(target: Target) -> &'static [&'static str] {
-    match target {
-        Target::Npm => &["npm"],
-        Target::Pnpm => &["pnpm"],
-        Target::Yarn => &["yarn"],
-        Target::Bun => &["bun"],
-        Target::Node => &["npm", "pnpm", "yarn", "bun"],
-        Target::Go => &["go"],
-        Target::Pip => &["pip"],
-        Target::Pip3 => &["pip3"],
-        Target::Python => &["pip", "uv", "pdm", "poetry"],
-        Target::Uv => &["uv"],
-        Target::Pdm => &["pdm"],
-        Target::Poetry => &["poetry"],
-        Target::Composer | Target::Php => &["composer"],
-        Target::Gem | Target::Bundle | Target::Ruby => &["gem"],
-        Target::Maven => &["mvn"],
-        Target::Gradle => &["gradle"],
-        Target::Sbt => &["sbt"],
-        Target::Java => &["mvn", "gradle", "sbt"],
-        Target::Cargo => &["cargo"],
-        Target::Rust => &["cargo", "rustup"],
-        Target::Docker => &["docker"],
-        Target::Containerd | Target::Nerdctl => &["containerd", "nerdctl"],
-        Target::Podman => &["podman"],
-        Target::Conda => &["conda"],
-        Target::Mamba => &["mamba"],
-        Target::Dart => &["dart", "flutter"],
-        Target::Flutter => &["flutter"],
-        Target::Nuget | Target::Dotnet => &["dotnet"],
-        Target::Cran | Target::R => &["R"],
-        Target::Huggingface => &["hf", "huggingface-cli"],
-        Target::Apt => &["apt"],
-        Target::Apk => &["apk"],
-        Target::Brew => &["brew"],
-        Target::Rustup => &["rustup"],
-        Target::Hex => &["mix"],
-        Target::Julia => &["julia"],
-        Target::Cpan => &["cpan"],
-        Target::Winget => &["winget"],
-        Target::Opam => &["opam"],
-        Target::Rye => &["rye"],
-        Target::Nvm => &["node"],
-        Target::Luarocks => &["luarocks"],
-        Target::Clojure => &["clojure"],
-        Target::Haskell => &["cabal", "stack"],
-        Target::Hackage | Target::Cabal => &["cabal"],
-        Target::Stack => &["stack"],
-        Target::Ocaml => &["opam"],
-        Target::Cocoapods => &["pod"],
-        Target::Flathub => &["flatpak"],
-        Target::Nix => &["nix"],
-        Target::Guix => &["guix"],
-        Target::Emacs => &["emacs"],
-        Target::Tex => &["tlmgr"],
-        Target::Linuxmint | Target::Kali | Target::Ros | Target::Trisquel | Target::Linuxlite => {
-            &["apt"]
-        }
-        Target::Fedora | Target::Rocky | Target::Alma | Target::Openeuler | Target::Openanolis => {
-            &["dnf", "yum"]
-        }
-        Target::Opensuse => &["zypper"],
-        Target::Arch | Target::Archlinuxcn | Target::Manjaro | Target::Msys2 => &["pacman"],
-        Target::Gentoo => &["emerge"],
-        Target::Voidlinux => &["xbps-install"],
-        Target::Solus => &["eopkg"],
-        Target::Raspi | Target::Armbian | Target::Openkylin | Target::Deepin => &["apt"],
-        Target::Openwrt => &["opkg"],
-        Target::Termux | Target::Freebsd => &["pkg"],
-        Target::Openbsd => &["pkg_add"],
-        Target::Netbsd => &["pkgin"],
-        Target::All => &[],
-    }
 }
 
 fn measure(
@@ -2041,11 +2068,23 @@ fn measure_one(
             lm::catalog::resolve(name, Some(selector), config)?,
         )]
     } else {
-        let mut candidates = specs
-            .iter()
-            .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
-            .collect::<Vec<_>>();
-        if config.default_for(name).is_some() {
+        let mut candidates = if let Some(selections) = config.mirrors_for(name) {
+            selections
+                .iter()
+                .map(|selection| {
+                    Ok((
+                        selection.clone(),
+                        lm::catalog::resolve(name, Some(selection), config)?,
+                    ))
+                })
+                .collect::<io::Result<Vec<_>>>()?
+        } else {
+            specs
+                .iter()
+                .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
+                .collect::<Vec<_>>()
+        };
+        if config.mirrors_for(name).is_none() && config.default_for(name).is_some() {
             let url = lm::catalog::resolve(name, None, config)?;
             if !candidates.iter().any(|(_, candidate)| candidate == &url) {
                 candidates.push(("configured".to_owned(), url));
@@ -2278,6 +2317,93 @@ fn config_command(config: &Config, command: ConfigCommand) -> io::Result<()> {
     }
 }
 
+fn env_command(
+    target: Target,
+    selector: Option<&str>,
+    shell: EnvShell,
+    config: &Config,
+) -> io::Result<()> {
+    let mirror = lm::catalog::resolve(catalog_name(target), selector, config)?;
+    let assignments = environment_values(target, &mirror).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{} does not expose shell environment mirror variables",
+                target_name(target)
+            ),
+        )
+    })?;
+    for (name, value) in assignments {
+        let value = match shell {
+            EnvShell::Sh | EnvShell::Fish => shell_single_quote(&value),
+            EnvShell::Powershell => powershell_single_quote(&value),
+        };
+        match shell {
+            EnvShell::Sh => println!("export {name}={value}"),
+            EnvShell::Fish => println!("set -gx {name} {value}"),
+            EnvShell::Powershell => println!("$env:{name} = {value}"),
+        }
+    }
+    Ok(())
+}
+
+fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str, String)>> {
+    let base = mirror.trim_end_matches('/');
+    let values = match target {
+        Target::Dart => vec![("PUB_HOSTED_URL", mirror.to_owned())],
+        Target::Flutter => vec![
+            ("PUB_HOSTED_URL", flutter_pub_url(mirror)),
+            ("FLUTTER_STORAGE_BASE_URL", mirror.to_owned()),
+        ],
+        Target::Huggingface => vec![("HF_ENDPOINT", mirror.to_owned())],
+        Target::Brew => vec![
+            (
+                "HOMEBREW_API_DOMAIN",
+                format!("{base}/homebrew-bottles/api"),
+            ),
+            ("HOMEBREW_BOTTLE_DOMAIN", format!("{base}/homebrew-bottles")),
+            (
+                "HOMEBREW_BREW_GIT_REMOTE",
+                format!("{base}/git/homebrew/brew.git"),
+            ),
+            (
+                "HOMEBREW_CORE_GIT_REMOTE",
+                format!("{base}/git/homebrew/homebrew-core.git"),
+            ),
+        ],
+        Target::Rustup => vec![
+            ("RUSTUP_DIST_SERVER", mirror.to_owned()),
+            ("RUSTUP_UPDATE_ROOT", format!("{base}/rustup")),
+        ],
+        Target::Julia => vec![("JULIA_PKG_SERVER", mirror.to_owned())],
+        Target::Cpan => vec![("PERL_CPAN_MIRROR", mirror.to_owned())],
+        Target::Rye => vec![("RYE_PYPI_MIRROR", mirror.to_owned())],
+        Target::Nvm => vec![("NVM_NODEJS_ORG_MIRROR", mirror.to_owned())],
+        Target::Nix => vec![("NIX_CONFIG", mirror.to_owned())],
+        Target::Guix => vec![("GUIX_SUBSTITUTE_URLS", mirror.to_owned())],
+        _ => return None,
+    };
+    Some(values)
+}
+
+fn flutter_pub_url(mirror: &str) -> String {
+    if mirror.ends_with("/flutter") {
+        return format!("{}/dart-pub", mirror.trim_end_matches("/flutter"));
+    }
+    if mirror == "https://storage.flutter-io.cn" {
+        return "https://pub.flutter-io.cn".to_owned();
+    }
+    mirror.to_owned()
+}
+
+fn shell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "'\\''"))
+}
+
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
 fn completions(shell: CompletionShell) -> io::Result<()> {
     let mut words = BTreeSet::from([
         "list",
@@ -2291,6 +2417,7 @@ fn completions(shell: CompletionShell) -> io::Result<()> {
         "plan",
         "diff",
         "completions",
+        "env",
         "--help",
         "--version",
         "--format",
@@ -2302,6 +2429,8 @@ fn completions(shell: CompletionShell) -> io::Result<()> {
         "--only-installed",
         "--no-cache",
         "--parallelism",
+        "--explain",
+        "--shell",
     ]);
     for target in lm::catalog::targets() {
         words.insert(target.name);
@@ -2382,7 +2511,16 @@ fn run() -> io::Result<()> {
             format,
             only_installed,
             all_scopes,
-        } => get(target, &config, scope, format, only_installed, all_scopes),
+            explain,
+        } => get(
+            target,
+            &config,
+            scope,
+            format,
+            only_installed,
+            all_scopes,
+            explain,
+        ),
         Commands::Set {
             target,
             mirror,
@@ -2463,6 +2601,11 @@ fn run() -> io::Result<()> {
         }
         Commands::Config { command } => config_command(&config, command),
         Commands::Completions { shell } => completions(shell),
+        Commands::Env {
+            target,
+            mirror,
+            shell,
+        } => env_command(target, mirror.as_deref(), shell, &config),
         Commands::Doctor {
             target,
             mirror,
@@ -2472,6 +2615,7 @@ fn run() -> io::Result<()> {
             no_cache,
             only_installed,
             parallelism,
+            explain,
         } => doctor(
             target,
             mirror.as_deref(),
@@ -2484,6 +2628,7 @@ fn run() -> io::Result<()> {
                 only_installed,
                 parallelism,
             },
+            explain,
         ),
         Commands::Plan {
             target,
@@ -2531,6 +2676,9 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "config", "init"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "completions", "bash"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "huggingface", "--scope", "project"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "get", "pip", "--explain"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "doctor", "pip", "--explain"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "env", "huggingface", "hf-mirror"]).is_ok());
     }
 
     #[test]
@@ -2583,12 +2731,57 @@ mod tests {
     #[test]
     fn grouped_targets_detect_any_installed_member() {
         assert_eq!(
-            command_candidates(Target::Node),
+            target_capabilities(Target::Node).commands,
             &["npm", "pnpm", "yarn", "bun"]
         );
-        assert_eq!(command_candidates(Target::Java), &["mvn", "gradle", "sbt"]);
-        assert_eq!(command_candidates(Target::Rust), &["cargo", "rustup"]);
-        assert_eq!(command_candidates(Target::Dart), &["dart", "flutter"]);
-        assert_eq!(command_candidates(Target::Haskell), &["cabal", "stack"]);
+        assert_eq!(
+            target_capabilities(Target::Java).commands,
+            &["mvn", "gradle", "sbt"]
+        );
+        assert_eq!(
+            target_capabilities(Target::Rust).commands,
+            &["cargo", "rustup"]
+        );
+        assert_eq!(
+            target_capabilities(Target::Dart).commands,
+            &["dart", "flutter"]
+        );
+        assert_eq!(
+            target_capabilities(Target::Haskell).commands,
+            &["cabal", "stack"]
+        );
+    }
+
+    #[test]
+    fn capabilities_describe_scope_and_atomic_support() {
+        let docker = target_capabilities(Target::Docker);
+        assert!(!docker.supports(Scope::Project));
+        assert!(docker.supports(Scope::User));
+        assert!(docker.supports(Scope::System));
+        assert!(docker.atomic);
+
+        let npm = target_capabilities(Target::Npm);
+        assert!(npm.supports(Scope::Project));
+        assert!(!npm.supports(Scope::System));
+        assert!(!npm.atomic);
+    }
+
+    #[test]
+    fn env_output_matches_adapter_variables() {
+        assert_eq!(
+            environment_values(Target::Flutter, "https://mirror.example/flutter"),
+            Some(vec![
+                (
+                    "PUB_HOSTED_URL",
+                    "https://mirror.example/dart-pub".to_owned()
+                ),
+                (
+                    "FLUTTER_STORAGE_BASE_URL",
+                    "https://mirror.example/flutter".to_owned()
+                ),
+            ])
+        );
+        assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
+        assert_eq!(powershell_single_quote("a'b"), "'a''b'");
     }
 }
