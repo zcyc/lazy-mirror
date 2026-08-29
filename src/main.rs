@@ -1857,7 +1857,7 @@ fn inspect_with_expected(
     expected: &str,
     scope: Scope,
 ) -> io::Result<lm::ToolStatus> {
-    match target {
+    let status = match target {
         Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun | Target::Node => {
             let name = if target == Target::Node {
                 "npm"
@@ -1954,7 +1954,17 @@ fn inspect_with_expected(
         | Target::Openbsd
         | Target::Netbsd) => lm::platform::os_status(target_name(target), scope),
         Target::All => unreachable!(),
-    }
+    }?;
+    Ok(apply_expected_status(target, expected, status))
+}
+
+fn apply_expected_status(
+    target: Target,
+    expected: &str,
+    mut status: lm::ToolStatus,
+) -> lm::ToolStatus {
+    status.configured = source_matches(target, &status, expected);
+    status
 }
 
 fn status_record(target: Target, config: &Config, scope: Scope) -> StatusRecord {
@@ -2607,7 +2617,7 @@ fn measure(
                 println!(
                     "{}\t{}\t{}\tfailed\t{}",
                     record.target,
-                    record.mirror,
+                    redact_selection(&record.mirror),
                     redact_url(&record.url),
                     error
                 );
@@ -2615,7 +2625,7 @@ fn measure(
                 println!(
                     "{}\t{}\t{}\t{}\t{}\t{}ms{}",
                     record.target,
-                    record.mirror,
+                    redact_selection(&record.mirror),
                     redact_url(&record.url),
                     record.code.as_deref().unwrap_or_default(),
                     record.state,
@@ -2833,7 +2843,7 @@ fn measure_json(record: &MeasureRecord) -> serde_json::Value {
     serde_json::json!({
         "schema": lm::JSON_SCHEMA,
         "target": record.target.clone(),
-        "mirror": record.mirror.clone(),
+        "mirror": redact_selection(&record.mirror),
         "url": redact_url(&record.url),
         "probe_url": record.probe_url.as_deref().map(redact_url),
         "code": record.code.clone(),
@@ -3358,6 +3368,40 @@ mod tests {
         assert_eq!(
             redact_url("https://user:secret@example.com/a?token=x"),
             "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn measure_json_redacts_selector_urls() {
+        let record = MeasureRecord {
+            target: "pip".to_owned(),
+            mirror: "https://mirror.example/simple?token=secret".to_owned(),
+            url: "https://mirror.example/simple?token=secret".to_owned(),
+            probe_url: None,
+            code: Some("200".to_owned()),
+            state: "healthy".to_owned(),
+            detail: None,
+            milliseconds: Some(10),
+            metrics: None,
+            cached: false,
+            error: None,
+        };
+        let output = measure_json(&record);
+        assert_eq!(output["mirror"], "https://mirror.example/simple");
+        assert!(!serde_json::to_string(&output).unwrap().contains("secret"));
+    }
+
+    #[test]
+    fn expected_status_rejects_a_different_managed_source() {
+        let status = lm::ToolStatus::new(
+            "helm version".to_owned(),
+            true,
+            Some("https://other.example.com".to_owned()),
+            None,
+            "",
+        );
+        assert!(
+            !apply_expected_status(Target::Helm, "https://charts.example.com", status).configured
         );
     }
 

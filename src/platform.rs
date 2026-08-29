@@ -286,10 +286,14 @@ pub fn cocoapods_status(expected: &str, scope: Scope) -> io::Result<crate::ToolS
 
 pub fn flatpak_set(mirror: &str, scope: Scope) -> io::Result<()> {
     require_user("flatpak", scope)?;
-    crate::run("flatpak", &["remote-modify", "--url", mirror, "flathub"]).or_else(|_| {
+    crate::run(
+        "flatpak",
+        &flatpak_args(&["remote-modify", "--url", mirror, "flathub"]),
+    )
+    .or_else(|_| {
         crate::run(
             "flatpak",
-            &["remote-add", "--if-not-exists", "flathub", mirror],
+            &flatpak_args(&["remote-add", "--if-not-exists", "flathub", mirror]),
         )
     })
 }
@@ -298,20 +302,21 @@ pub fn flatpak_unset(scope: Scope) -> io::Result<()> {
     require_user("flatpak", scope)?;
     crate::run(
         "flatpak",
-        &[
+        &flatpak_args(&[
             "remote-modify",
             "--url",
             "https://dl.flathub.org/repo/",
             "flathub",
-        ],
+        ]),
     )
 }
 
 pub fn flatpak_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     require_user("flatpak", scope)?;
     let version = crate::command_version("flatpak")?;
-    let detail = crate::command_output("flatpak", &["remotes", "--columns=name,url"])
-        .unwrap_or_else(|_| "not configured".to_owned());
+    let detail =
+        crate::command_output("flatpak", &flatpak_args(&["remotes", "--columns=name,url"]))
+            .unwrap_or_else(|_| "not configured".to_owned());
     let source = detail.lines().find_map(|line| {
         let mut fields = line.split_whitespace();
         (fields.next() == Some("flathub"))
@@ -325,6 +330,13 @@ pub fn flatpak_status(expected: &str, scope: Scope) -> io::Result<crate::ToolSta
         None,
         detail,
     ))
+}
+
+fn flatpak_args<'a>(args: &[&'a str]) -> Vec<&'a str> {
+    let mut scoped = Vec::with_capacity(args.len() + 1);
+    scoped.push("--user");
+    scoped.extend_from_slice(args);
+    scoped
 }
 
 pub fn emacs_set(mirror: &str, scope: Scope) -> io::Result<()> {
@@ -960,7 +972,7 @@ pub(crate) fn apt_distribution() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{nix_mirror, os_content, profile_relative_path, source_for_restore};
+    use super::{flatpak_args, nix_mirror, os_content, profile_relative_path, source_for_restore};
 
     #[test]
     fn msys2_uses_pacman_repository_layout() {
@@ -998,5 +1010,24 @@ mod tests {
             ".config/fish/config.fish"
         );
         assert_eq!(profile_relative_path("/bin/bash"), ".profile");
+    }
+
+    #[test]
+    fn flatpak_commands_use_user_scope() {
+        assert_eq!(
+            flatpak_args(&[
+                "remote-modify",
+                "--url",
+                "https://mirror.example",
+                "flathub"
+            ]),
+            vec![
+                "--user",
+                "remote-modify",
+                "--url",
+                "https://mirror.example",
+                "flathub"
+            ]
+        );
     }
 }

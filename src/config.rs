@@ -212,10 +212,10 @@ impl Config {
 
         let mirrors = string_table(document, "mirrors")?;
         for (name, url) in &mirrors {
-            if !is_url(url) {
+            if !is_config_mirror_url(url) {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
-                    format!("TOML mirror {name} must be an HTTP(S) URL"),
+                    format!("TOML mirror {name} must be a valid HTTP(S) or Cargo sparse URL"),
                 ));
             }
         }
@@ -430,9 +430,10 @@ fn validate_selection(
     spec: &crate::catalog::TargetSpec,
     mirrors: &BTreeMap<String, String>,
 ) -> io::Result<()> {
-    let valid = is_selection_url(target, selection)
-        || mirrors.contains_key(selection)
-        || (selection == "first" && !spec.mirrors.is_empty())
+    let valid = mirrors.get(selection).map_or_else(
+        || is_selection_url(target, selection),
+        |url| is_selection_url(target, url),
+    ) || (selection == "first" && !spec.mirrors.is_empty())
         || spec.mirrors.iter().any(|mirror| mirror.name == selection);
     if valid {
         Ok(())
@@ -633,6 +634,12 @@ pub(crate) fn is_selection_url(target: &str, value: &str) -> bool {
         && (target != "cargo" || !url.contains(['?', '#']))
 }
 
+fn is_config_mirror_url(value: &str) -> bool {
+    value
+        .strip_prefix("sparse+")
+        .map_or_else(|| is_url(value), |_| is_selection_url("cargo", value))
+}
+
 fn redactable_url(value: &str) -> bool {
     is_url(value) || value.strip_prefix("sparse+").is_some_and(is_url)
 }
@@ -774,6 +781,25 @@ mod tests {
             Some("https://mirror.example/simple")
         );
         assert_eq!(config.default_for("pip"), Some("internal"));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn reads_named_cargo_sparse_mirrors() {
+        let path = env::temp_dir().join(format!(
+            "lm-config-cargo-sparse-{}.toml",
+            std::process::id()
+        ));
+        fs::write(
+            &path,
+            "[mirrors]\ninternal = \"sparse+https://mirror.example/index/\"\n[defaults]\ncargo = \"internal\"\n",
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(
+            config.mirror("internal"),
+            Some("sparse+https://mirror.example/index/")
+        );
         fs::remove_file(path).unwrap();
     }
 

@@ -31,34 +31,91 @@ pub fn buildkit_set(mirror: &str, scope: Scope) -> io::Result<()> {
 }
 
 fn buildkit_set_at(path: &Path, mirror: &str) -> io::Result<()> {
+    let previous_content = fs::read_to_string(path).ok();
+    let had_backup = crate::backup_path(path).exists();
+    let had_created_marker = crate::created_marker_path(path).exists();
+    let previous_marker = fs::read_to_string(current_marker_path(path)).ok();
     crate::update_toml(
         path,
-        |document| {
-            let registry = document
-                .entry("registry")
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-                .as_table_mut()
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "registry must be a TOML table")
-                })?;
-            let docker = registry
-                .entry("docker.io")
-                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
-                .as_table_mut()
-                .ok_or_else(|| {
-                    io::Error::new(
-                        io::ErrorKind::InvalidData,
-                        "registry.docker.io must be a TOML table",
-                    )
-                })?;
-            docker.insert(
-                "mirrors".to_owned(),
-                toml::Value::Array(vec![toml::Value::String(mirror.to_owned())]),
-            );
-            Ok(())
-        },
-        is_buildkit_managed,
-    )
+        |document| set_buildkit_mirror(document, mirror),
+        |document| is_buildkit_managed(path, document),
+    )?;
+    if let Err(error) = crate::atomic_write(&current_marker_path(path), mirror) {
+        if let Some(content) = previous_content {
+            let _ = crate::atomic_write(path, &content);
+        } else {
+            let _ = fs::remove_file(path);
+        }
+        if !had_backup {
+            let _ = fs::remove_file(crate::backup_path(path));
+        }
+        if !had_created_marker {
+            let _ = fs::remove_file(crate::created_marker_path(path));
+        }
+        match previous_marker {
+            Some(marker) => {
+                let _ = crate::atomic_write(&current_marker_path(path), &marker);
+            }
+            None => {
+                let _ = fs::remove_file(current_marker_path(path));
+            }
+        }
+        return Err(error);
+    }
+    Ok(())
+}
+
+fn set_buildkit_mirror(document: &mut toml::Table, mirror: &str) -> io::Result<()> {
+    let registry = document
+        .entry("registry")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::InvalidData, "registry must be a TOML table")
+        })?;
+    let docker = registry
+        .entry("docker.io")
+        .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+        .as_table_mut()
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                "registry.docker.io must be a TOML table",
+            )
+        })?;
+    docker.insert(
+        "mirrors".to_owned(),
+        toml::Value::Array(vec![toml::Value::String(mirror.to_owned())]),
+    );
+    Ok(())
+}
+
+fn is_buildkit_managed(path: &Path, document: &toml::Table) -> bool {
+    let Some(mirror) = buildkit_mirror(document) else {
+        return false;
+    };
+    let Some(current) = fs::read_to_string(current_marker_path(path)).ok() else {
+        return false;
+    };
+    if current.trim() != mirror || validate_mirror(mirror).is_err() {
+        return false;
+    }
+
+    let mut expected = if crate::backup_path(path).exists() {
+        let Ok(content) = fs::read_to_string(crate::backup_path(path)) else {
+            return false;
+        };
+        let Ok(document) = content.parse::<toml::Table>() else {
+            return false;
+        };
+        document
+    } else {
+        if !crate::created_marker_path(path).exists() {
+            return false;
+        }
+        toml::Table::new()
+    };
+    set_buildkit_mirror(&mut expected, mirror).is_ok() && expected == *document
 }
 
 pub fn buildkit_unset(scope: Scope) -> io::Result<()> {
@@ -81,7 +138,12 @@ fn buildkit_unset_at(path: &Path) -> io::Result<()> {
             ),
         ));
     }
-    crate::remove_toml_with_backup(path, is_buildkit_managed)
+    let result =
+        crate::remove_toml_with_backup(path, |document| is_buildkit_managed(path, document));
+    if result.is_ok() {
+        let _ = fs::remove_file(current_marker_path(path));
+    }
+    result
 }
 
 pub fn buildkit_status(scope: Scope) -> io::Result<ToolStatus> {
@@ -152,10 +214,6 @@ fn buildkit_mirror(document: &toml::Table) -> Option<&str> {
         .and_then(toml::Value::as_array)
         .and_then(|mirrors| mirrors.first())
         .and_then(toml::Value::as_str)
-}
-
-fn is_buildkit_managed(document: &toml::Table) -> bool {
-    buildkit_mirror(document).is_some_and(|mirror| validate_mirror(mirror).is_ok())
 }
 
 pub fn status(scope: Scope) -> io::Result<ToolStatus> {
@@ -625,6 +683,23 @@ mod tests {
         fs::create_dir_all(path.parent().unwrap()).unwrap();
         let content = "[registry.\"docker.io\"]\nmirrors = [\"https://user.example\"]\n";
         fs::write(&path, content).unwrap();
+
+        assert!(buildkit_unset_at(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn buildkit_reset_refuses_external_changes() {
+        let path = temp_path("buildkit-modified").with_file_name("buildkitd.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "debug = true\n").unwrap();
+
+        buildkit_set_at(&path, mirror_url("daocloud").unwrap()).unwrap();
+        let content = fs::read_to_string(&path)
+            .unwrap()
+            .replace("debug = true", "debug = false");
+        fs::write(&path, &content).unwrap();
 
         assert!(buildkit_unset_at(&path).is_err());
         assert_eq!(fs::read_to_string(&path).unwrap(), content);

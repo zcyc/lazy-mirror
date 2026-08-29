@@ -649,7 +649,13 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
         return Ok(selection.to_owned());
     }
     if let Some(url) = config.mirror(selection) {
-        return Ok(url.to_owned());
+        if crate::config::is_selection_url(spec.name, url) {
+            return Ok(url.to_owned());
+        }
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("mirror {selection} is not valid for {target}"),
+        ));
     }
     spec.mirrors
         .iter()
