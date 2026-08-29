@@ -1,30 +1,23 @@
-use std::process::Command;
+use std::io;
 
-pub fn set(name: &String) {
-    let output = Command::new("sh")
-        .args([
-            "-c",
-            format!(
-                "{} {}",
-                name,
-                String::from(
-                    "config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple"
-                )
-            )
-            .as_ref(),
-        ])
-        .output()
-        .expect("failed to execute");
-    println!("{:?}", output);
+pub fn set(name: &str, mirror: &str) -> io::Result<()> {
+    crate::run(
+        name,
+        &["config", "--user", "set", "global.index-url", mirror],
+    )
 }
 
-pub fn unset(name: &String) {
-    let output = Command::new("sh")
-        .args([
-            "-c",
-            format!("{} {}", name, String::from("config unset global.index-url")).as_ref(),
-        ])
-        .output()
-        .expect("failed to execute");
-    println!("{:?}", output);
+pub fn unset(name: &str) -> io::Result<()> {
+    crate::run(name, &["config", "--user", "unset", "global.index-url"])
+}
+
+pub fn status(name: &str, expected: &str) -> io::Result<crate::ToolStatus> {
+    let version = crate::command_version(name)?;
+    let index_url = crate::command_output(name, &["config", "--user", "get", "global.index-url"])
+        .unwrap_or_else(|_| "not configured".to_owned());
+    Ok(crate::ToolStatus {
+        configured: index_url == expected,
+        detail: format!("global.index-url={index_url}"),
+        version,
+    })
 }

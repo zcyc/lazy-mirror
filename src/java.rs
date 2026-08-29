@@ -1,78 +1,96 @@
 use std::fs;
-use std::io::Write;
+use std::io;
+use std::path::PathBuf;
 
-pub fn maven_set() {
-    let config_content = r#"<?xml version="1.0" encoding="UTF-8"?>
+const MAVEN_CONFIG_PREFIX: &str = r#"<?xml version="1.0" encoding="UTF-8"?>
 <settings>
     <mirrors>
         <mirror>
-            <id>aliyunmaven</id>
+            <id>lazy-mirror</id>
             <mirrorOf>*</mirrorOf>
-            <name>阿里云公共仓库</name>
-            <url>https://maven.aliyun.com/repository/public</url>
+            <name>lazy-mirror</name>
+            <url>"#;
+const MAVEN_CONFIG_SUFFIX: &str = r#"</url>
         </mirror>
     </mirrors>
 </settings>"#;
 
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let maven_config_path = format!("{}/.m2/settings.xml", home_dir);
-
-    // 删除已经存在的配置文件
-    let _ = std::fs::remove_file(&maven_config_path);
-
-    // 创建新的配置文件并写入内容
-    let mut maven_config_file = fs::File::create(&maven_config_path).unwrap();
-    maven_config_file
-        .write_all(config_content.as_bytes())
-        .unwrap();
-
-    println!("Successfully set the Maven mirror.");
-}
-
-pub fn maven_unset() {
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let maven_config_path = format!("{}/.m2/settings.xml", home_dir);
-
-    // 删除已经存在的配置文件
-    let _ = std::fs::remove_file(maven_config_path);
-
-    println!("Successfully deleted the Maven configuration file.");
-}
-
-pub fn gradle_set() {
-    let gradle_content = r#"allprojects {
+const GRADLE_CONFIG_PREFIX: &str = r#"allprojects {
   repositories {
     maven {
-      url 'https://maven.aliyun.com/repository/public/'
+      url '"#;
+const GRADLE_CONFIG_SUFFIX: &str = r#"'
     }
     mavenLocal()
     mavenCentral()
   }
 }"#;
 
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let gradle_config_path = format!("{}/.gradle/init.gradle", home_dir);
-
-    // 删除已经存在的配置文件
-    let _ = std::fs::remove_file(&gradle_config_path);
-
-    // 创建并写入 Gradle 配置文件
-    let mut gradle_config_file = fs::File::create(gradle_config_path).unwrap();
-    gradle_config_file
-        .write_all(gradle_content.as_bytes())
-        .unwrap();
-
-    println!("Successfully set the Gradle mirror.");
+pub fn maven_set(mirror: &str) -> io::Result<()> {
+    let path = crate::home_file(".m2/settings.xml")?;
+    let content = format!("{MAVEN_CONFIG_PREFIX}{mirror}{MAVEN_CONFIG_SUFFIX}");
+    crate::write_with_backup_if(&path, &content, |current| {
+        current.contains("<id>lazy-mirror</id>")
+    })?;
+    Ok(())
 }
 
-pub fn gradle_unset() {
-    let home_dir = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    let gradle_config_path = format!("{}/.gradle/init.gradle", home_dir);
+pub fn maven_unset() -> io::Result<()> {
+    let path = crate::home_file(".m2/settings.xml")?;
+    crate::remove_with_backup_if(&path, |content| content.contains("<id>lazy-mirror</id>"))?;
+    Ok(())
+}
 
-    if std::path::Path::new(&gradle_config_path).exists() {
-        std::fs::remove_file(&gradle_config_path).unwrap();
-        println!("Successfully unset the Gradle mirror.");
-    } else {
-        println!("Gradle mirror is not set.");
+pub fn gradle_set(mirror: &str) -> io::Result<()> {
+    let path = gradle_config_path()?;
+    let content = format!("{GRADLE_CONFIG_PREFIX}{mirror}{GRADLE_CONFIG_SUFFIX}");
+    crate::write_with_backup_if(&path, &content, |current| {
+        current.starts_with(GRADLE_CONFIG_PREFIX) && current.ends_with(GRADLE_CONFIG_SUFFIX)
+    })?;
+    Ok(())
+}
+
+pub fn gradle_unset() -> io::Result<()> {
+    crate::remove_owned_if(&gradle_config_path()?, |content| {
+        content.starts_with(GRADLE_CONFIG_PREFIX) && content.ends_with(GRADLE_CONFIG_SUFFIX)
+    })?;
+    Ok(())
+}
+
+pub fn maven_status(expected: &str) -> io::Result<crate::ToolStatus> {
+    let version = crate::command_version("mvn")?;
+    let path = crate::home_file(".m2/settings.xml")?;
+    let configured = file_contains(&path, expected)?;
+    Ok(crate::ToolStatus {
+        configured,
+        detail: format!("config={}", path.display()),
+        version,
+    })
+}
+
+pub fn gradle_status(expected: &str) -> io::Result<crate::ToolStatus> {
+    let version = crate::command_version("gradle")?;
+    let path = gradle_config_path()?;
+    let configured = file_contains(&path, expected)?;
+    Ok(crate::ToolStatus {
+        configured,
+        detail: format!("config={}", path.display()),
+        version,
+    })
+}
+
+fn gradle_config_path() -> io::Result<PathBuf> {
+    std::env::var_os("GRADLE_USER_HOME")
+        .map(PathBuf::from)
+        .or_else(dirs::home_dir)
+        .map(|home| home.join("init.d/lazy-mirror.init.gradle"))
+        .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory"))
+}
+
+fn file_contains(path: &std::path::Path, value: &str) -> io::Result<bool> {
+    match fs::read_to_string(path) {
+        Ok(content) => Ok(content.contains(value)),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error),
     }
 }
