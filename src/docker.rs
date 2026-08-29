@@ -34,6 +34,7 @@ pub fn status() -> io::Result<ToolStatus> {
     let version = command_version("docker")?;
     let path = config_path()?;
     let config = read_config(&path)?;
+    let source = config.as_ref().and_then(configured_mirror);
     let (configured, detail) = match config {
         None => (
             false,
@@ -64,11 +65,21 @@ pub fn status() -> io::Result<ToolStatus> {
             }
         }
     };
-    Ok(ToolStatus {
+    Ok(ToolStatus::new(
         version,
         configured,
+        source,
+        Some(path),
         detail,
-    })
+    ))
+}
+
+fn configured_mirror(config: &Value) -> Option<String> {
+    configured_mirrors(config)
+        .ok()?
+        .into_iter()
+        .next()
+        .map(str::to_owned)
 }
 
 fn set_at(path: &Path, url: &str) -> io::Result<()> {

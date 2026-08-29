@@ -12,9 +12,12 @@ pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("pdm")?;
     let value = crate::command_output("pdm", &["config", "pypi.url"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: value.trim_end_matches('/') == expected.trim_end_matches('/'),
-        detail: format!("pypi.url={value}"),
+    let source = (value != "not configured").then(|| value.clone());
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        value.trim_end_matches('/') == expected.trim_end_matches('/'),
+        source,
+        None,
+        format!("pypi.url={value}"),
+    ))
 }

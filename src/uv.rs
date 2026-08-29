@@ -47,15 +47,17 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let configured = source
         .as_deref()
         .is_some_and(|url| url.trim_end_matches('/') == expected.trim_end_matches('/'));
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 fn config_path(scope: Scope) -> io::Result<PathBuf> {

@@ -24,15 +24,17 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
             .and_then(|content| env_value(&content, "HF_ENDPOINT"))
     });
     let configured = source.as_deref().is_some_and(|value| value == expected);
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; profile={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 fn env_value(content: &str, variable: &str) -> Option<String> {

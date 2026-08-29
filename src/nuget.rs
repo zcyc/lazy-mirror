@@ -55,11 +55,21 @@ pub fn status(scope: Scope) -> io::Result<crate::ToolStatus> {
         &path_string,
     ])
     .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: detail.contains(SOURCE_NAME),
-        detail: format!("config={}; {detail}", path.display()),
+    let source = detail
+        .lines()
+        .skip_while(|line| !line.contains(SOURCE_NAME))
+        .find_map(|line| {
+            let value = line.trim();
+            (value.starts_with("http://") || value.starts_with("https://"))
+                .then(|| value.to_owned())
+        });
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        source.is_some(),
+        source,
+        Some(path.clone()),
+        format!("config={}; {detail}", path.display()),
+    ))
 }
 
 fn config_path(scope: Scope) -> io::Result<PathBuf> {

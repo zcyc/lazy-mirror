@@ -29,9 +29,16 @@ pub fn status(name: &str, expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version(executable)?;
     let detail = crate::command_output(executable, &["config", "--show", "channel_alias"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: detail.contains(expected.trim_end_matches('/')),
-        detail,
+    let source = detail
+        .lines()
+        .find_map(|line| line.trim().strip_prefix("channel_alias:").map(str::trim))
+        .filter(|value| !value.is_empty())
+        .map(str::to_owned);
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        detail.contains(expected.trim_end_matches('/')),
+        source,
+        None,
+        detail,
+    ))
 }

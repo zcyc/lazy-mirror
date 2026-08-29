@@ -350,6 +350,211 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: EMPTY,
     },
     TargetSpec {
+        name: "rye",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "nvm",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "luarocks",
+        aliases: &["lua"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "clojure",
+        aliases: &["clojars"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "haskell",
+        aliases: &["hackage"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "cabal",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "stack",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "ocaml",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "cocoapods",
+        aliases: &["cocoa", "pod"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "flathub",
+        aliases: &["flatpak"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "nix",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "guix",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "emacs",
+        aliases: &["elpa"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "tex",
+        aliases: &["ctan", "latex", "texlive", "miktex"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "linuxmint",
+        aliases: &["mint", "zorinos"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "fedora",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "opensuse",
+        aliases: &["suse"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "kali",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "arch",
+        aliases: &["archlinux"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "archlinuxcn",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "manjaro",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "gentoo",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "rocky",
+        aliases: &["rockylinux"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "alma",
+        aliases: &["almalinux"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "voidlinux",
+        aliases: &["void"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "solus",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "ros",
+        aliases: &["ros2"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "trisquel",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "linuxlite",
+        aliases: &["lite"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "raspi",
+        aliases: &["raspberrypi"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "armbian",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "openwrt",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "openeuler",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "openanolis",
+        aliases: &["anolis"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "openkylin",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "deepin",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "msys2",
+        aliases: &["msys"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "termux",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "freebsd",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "openbsd",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "netbsd",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
         name: "nuget",
         aliases: &["dotnet"],
         mirrors: EMPTY,
@@ -417,8 +622,7 @@ pub fn builtin_mirrors(target: &str) -> io::Result<&'static [MirrorSpec]> {
 }
 
 fn is_url(value: &str) -> bool {
-    (value.starts_with("https://") || value.starts_with("http://"))
-        && !value.contains(char::is_whitespace)
+    crate::config::is_url(value)
 }
 
 fn invalid_target(target: &str) -> io::Error {

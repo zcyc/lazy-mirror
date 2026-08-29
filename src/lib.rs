@@ -1,7 +1,7 @@
 use std::fs::{self, OpenOptions};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -60,10 +60,39 @@ pub(crate) fn command_version(program: &str) -> io::Result<String> {
         .to_owned())
 }
 
+pub fn command_exists(program: &str) -> bool {
+    Command::new(program)
+        .arg("--version")
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success())
+}
+
 pub struct ToolStatus {
     pub version: String,
     pub configured: bool,
+    pub source: Option<String>,
+    pub path: Option<PathBuf>,
     pub detail: String,
+}
+
+impl ToolStatus {
+    pub fn new(
+        version: String,
+        configured: bool,
+        source: Option<String>,
+        path: Option<PathBuf>,
+        detail: impl Into<String>,
+    ) -> Self {
+        Self {
+            version,
+            configured,
+            source,
+            path,
+            detail: detail.into(),
+        }
+    }
 }
 
 pub(crate) struct FileLock {
@@ -287,6 +316,15 @@ where
 }
 
 pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -> io::Result<()> {
+    update_named_block(path, name, "#", block)
+}
+
+pub(crate) fn update_named_block(
+    path: &Path,
+    name: &str,
+    comment: &str,
+    block: &str,
+) -> io::Result<()> {
     if let Some(parent) = path
         .parent()
         .filter(|parent| !parent.as_os_str().is_empty())
@@ -294,8 +332,8 @@ pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -
         fs::create_dir_all(parent)?;
     }
     let _lock = lock(path)?;
-    let start = format!("# >>> lazy-mirror:{name} >>>");
-    let end_marker = format!("# <<< lazy-mirror:{name} <<<");
+    let start = format!("{comment} >>> lazy-mirror:{name} >>>");
+    let end_marker = format!("{comment} <<< lazy-mirror:{name} <<<");
     let existing = read_optional(path)?.unwrap_or_default();
     let replacement = format!("{start}\n{block}\n{end_marker}");
     let content = match (existing.find(&start), existing.find(&end_marker)) {
@@ -321,9 +359,13 @@ pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -
 }
 
 pub(crate) fn remove_named_managed_block(path: &Path, name: &str) -> io::Result<()> {
+    remove_named_block(path, name, "#")
+}
+
+pub(crate) fn remove_named_block(path: &Path, name: &str, comment: &str) -> io::Result<()> {
     let _lock = lock(path)?;
-    let start_marker = format!("# >>> lazy-mirror:{name} >>>");
-    let end_marker = format!("# <<< lazy-mirror:{name} <<<");
+    let start_marker = format!("{comment} >>> lazy-mirror:{name} >>>");
+    let end_marker = format!("{comment} <<< lazy-mirror:{name} <<<");
     let Some(existing) = read_optional(path)? else {
         return Ok(());
     };

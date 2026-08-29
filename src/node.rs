@@ -86,11 +86,14 @@ pub fn status(name: &str, expected: &str, scope: Scope) -> io::Result<crate::Too
         crate::command_output(name, &["config", "get", "registry"])
     }
     .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: registry == expected,
-        detail: format!("registry={registry}"),
+    let source = (registry != "not configured").then(|| registry.clone());
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        registry == expected,
+        source,
+        None,
+        format!("registry={registry}"),
+    ))
 }
 
 fn yarn_berry() -> io::Result<bool> {

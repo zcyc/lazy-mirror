@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::env;
-use std::io;
-use std::process::Command;
+use std::io::{self, Write};
+use std::process::{Command, Stdio};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 #[derive(Debug, Clone)]
@@ -148,23 +148,25 @@ fn request(url: &str, timeout_seconds: u64) -> io::Result<ProbeResult> {
         "--write-out".to_owned(),
         "%{http_code}".to_owned(),
     ];
-    if let Some(token) = env::var_os("LM_MIRROR_TOKEN") {
-        args.extend([
-            "--header".to_owned(),
-            format!("Authorization: Bearer {}", token.to_string_lossy()),
-        ]);
-    }
-    if let (Some(user), Some(password)) = (
-        env::var_os("LM_MIRROR_USERNAME"),
-        env::var_os("LM_MIRROR_PASSWORD"),
-    ) {
-        args.extend([
-            "--user".to_owned(),
-            format!("{}:{}", user.to_string_lossy(), password.to_string_lossy()),
-        ]);
-    }
     args.push(url.to_owned());
-    let output = Command::new("curl").args(&args).output()?;
+    let curl_config = curl_auth_config();
+    if curl_config.is_some() {
+        args.extend(["--config".to_owned(), "-".to_owned()]);
+    }
+    let output = if let Some(curl_config) = curl_config {
+        let mut child = Command::new("curl")
+            .args(&args)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()?;
+        if let Some(mut stdin) = child.stdin.take() {
+            stdin.write_all(curl_config.as_bytes())?;
+        }
+        child.wait_with_output()?
+    } else {
+        Command::new("curl").args(&args).output()?
+    };
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         return Err(io::Error::other(if detail.is_empty() {
@@ -185,6 +187,47 @@ fn request(url: &str, timeout_seconds: u64) -> io::Result<ProbeResult> {
         code,
         milliseconds: started.elapsed().as_millis(),
     })
+}
+
+fn curl_auth_config() -> Option<String> {
+    let mut config = String::new();
+    if let Some(token) = env::var_os("LM_MIRROR_TOKEN") {
+        config.push_str("header = ");
+        config.push_str(&curl_config_value(&format!(
+            "Authorization: Bearer {}",
+            token.to_string_lossy()
+        )));
+        config.push('\n');
+    }
+    if let (Some(user), Some(password)) = (
+        env::var_os("LM_MIRROR_USERNAME"),
+        env::var_os("LM_MIRROR_PASSWORD"),
+    ) {
+        config.push_str("user = ");
+        config.push_str(&curl_config_value(&format!(
+            "{}:{}",
+            user.to_string_lossy(),
+            password.to_string_lossy()
+        )));
+        config.push('\n');
+    }
+    (!config.is_empty()).then_some(config)
+}
+
+fn curl_config_value(value: &str) -> String {
+    let mut escaped = String::with_capacity(value.len() + 2);
+    escaped.push('"');
+    for character in value.chars() {
+        match character {
+            '\\' => escaped.push_str("\\\\"),
+            '"' => escaped.push_str("\\\""),
+            '\n' => escaped.push_str("\\n"),
+            '\r' => escaped.push_str("\\r"),
+            character => escaped.push(character),
+        }
+    }
+    escaped.push('"');
+    escaped
 }
 
 fn classify(code: &str) -> String {
@@ -216,19 +259,30 @@ fn target_url(target: &str, url: &str) -> String {
     let url = url.split_once(',').map_or(url, |(url, _)| url);
     let url = url.trim_end_matches('/');
     let suffix = match target {
-        "npm" | "pnpm" | "yarn" | "bun" => "/-/ping",
-        "pip" | "uv" | "pdm" | "poetry" => "/simple/",
-        "docker" | "containerd" | "podman" => "/v2/",
-        "conda" => "/pkgs/main/repodata.json",
-        "cran" => "/src/contrib/PACKAGES",
-        "huggingface" => "/api/models?limit=1",
-        "nuget" => "/v3/index.json",
-        "apt" => "/dists/stable/Release",
-        "apk" => "/latest-stable/main/x86_64/APKINDEX.tar.gz",
-        "rustup" => "/dist/channel-rust-stable.toml",
-        "cpan" => "/modules/02packages.details.txt.gz",
-        "cabal" => "/01-index.tar.gz",
-        _ => "",
+        "apt" => format!(
+            "/dists/{}/Release",
+            std::env::var("LM_APT_DISTRIBUTION").unwrap_or_else(|_| "stable".to_owned())
+        ),
+        "npm" | "pnpm" | "yarn" | "bun" => "/-/ping".to_owned(),
+        "pip" | "uv" | "pdm" | "poetry" => "/simple/".to_owned(),
+        "docker" | "containerd" | "podman" => "/v2/".to_owned(),
+        "conda" => "/pkgs/main/repodata.json".to_owned(),
+        "cran" => "/src/contrib/PACKAGES".to_owned(),
+        "ros" => format!(
+            "/dists/{}/Release",
+            std::env::var("LM_ROS_DISTRIBUTION")
+                .or_else(|_| std::env::var("ROS_DISTRO"))
+                .unwrap_or_else(|_| "stable".to_owned())
+        ),
+        "huggingface" => "/api/models?limit=1".to_owned(),
+        "nuget" => "/v3/index.json".to_owned(),
+        "apk" => "/latest-stable/main/x86_64/APKINDEX.tar.gz".to_owned(),
+        "rustup" => "/dist/channel-rust-stable.toml".to_owned(),
+        "cpan" => "/modules/02packages.details.txt.gz".to_owned(),
+        "luarocks" => "/manifest".to_owned(),
+        "hackage" | "cabal" | "stack" => "/01-index.tar.gz".to_owned(),
+        "flathub" => "/summary".to_owned(),
+        _ => String::new(),
     };
     if suffix.is_empty() || url.ends_with(suffix.trim_end_matches('/')) {
         url.to_owned()

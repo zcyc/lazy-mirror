@@ -35,17 +35,27 @@ pub fn unset(scope: Scope) -> io::Result<()> {
 pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("poetry")?;
     if scope != Scope::Project {
-        return Ok(crate::ToolStatus {
-            configured: false,
-            detail: "Poetry sources are project-scoped".to_owned(),
+        return Ok(crate::ToolStatus::new(
             version,
-        });
+            false,
+            None,
+            None,
+            "Poetry sources are project-scoped",
+        ));
     }
     let sources = crate::command_output("poetry", &["source", "show"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: sources.contains(expected),
-        detail: sources,
+    let source = sources
+        .lines()
+        .filter(|line| line.contains("lazy-mirror"))
+        .flat_map(str::split_whitespace)
+        .find(|value| value.starts_with("http://") || value.starts_with("https://"))
+        .map(str::to_owned);
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        sources.contains(expected),
+        source,
+        None,
+        sources,
+    ))
 }

@@ -16,9 +16,11 @@ pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
         .unwrap_or_default()
         .to_owned();
     let proxy = crate::command_output("go", &["env", "GOPROXY"])?;
-    Ok(crate::ToolStatus {
-        configured: proxy == expected,
-        detail: format!("GOPROXY={proxy}"),
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        proxy == expected,
+        Some(proxy.clone()),
+        None,
+        format!("GOPROXY={proxy}"),
+    ))
 }

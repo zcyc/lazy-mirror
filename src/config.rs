@@ -75,19 +75,14 @@ impl Config {
         }
         let defaults = string_table(&document, "defaults")?;
         let targets = target_table(&document)?;
-        let defaults = if defaults.is_empty() {
-            targets
-                .iter()
-                .filter_map(|(name, target)| {
-                    target
-                        .default
-                        .as_ref()
-                        .map(|value| (name.clone(), value.clone()))
-                })
-                .collect()
-        } else {
-            defaults
-        };
+        let mut defaults = defaults;
+        for (name, target) in &targets {
+            if let Some(value) = &target.default {
+                defaults
+                    .entry(name.clone())
+                    .or_insert_with(|| value.clone());
+            }
+        }
         let mirrors = string_table(&document, "mirrors")?;
         for (name, url) in &mirrors {
             if !is_url(url) {
@@ -133,6 +128,60 @@ impl Config {
         self.mirrors
             .iter()
             .map(|(name, url)| (name.as_str(), url.as_str()))
+    }
+
+    pub fn effective_json(&self) -> serde_json::Value {
+        let targets = self
+            .targets
+            .iter()
+            .map(|(name, target)| {
+                let default = target.default.as_ref().map(|value| {
+                    if is_url(value) {
+                        redact_url(value)
+                    } else {
+                        value.clone()
+                    }
+                });
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "default": default,
+                        "enabled": target.enabled,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let defaults = self
+            .defaults
+            .iter()
+            .map(|(name, value)| {
+                (
+                    name.clone(),
+                    serde_json::Value::String(if is_url(value) {
+                        redact_url(value)
+                    } else {
+                        value.clone()
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>();
+        let mirrors = self
+            .mirrors
+            .iter()
+            .map(|(name, value)| (name.clone(), serde_json::Value::String(redact_url(value))))
+            .collect::<serde_json::Map<_, _>>();
+        serde_json::json!({
+            "config": self.path,
+            "mirrors": mirrors,
+            "defaults": defaults,
+            "targets": targets,
+            "options": {
+                "timeout_seconds": self.settings.timeout_seconds,
+                "retries": self.settings.retries,
+                "cache_ttl_seconds": self.settings.cache_ttl_seconds,
+                "parallelism": self.settings.parallelism,
+            }
+        })
     }
 }
 
@@ -222,13 +271,13 @@ fn settings_table(document: &toml::Table) -> io::Result<Settings> {
         settings.timeout_seconds = positive_integer(value, "timeout_seconds")?;
     }
     if let Some(value) = table.get("retries") {
-        settings.retries = integer(value, "retries")? as u32;
+        settings.retries = bounded_integer(value, "retries", 10)? as u32;
     }
     if let Some(value) = table.get("cache_ttl_seconds") {
         settings.cache_ttl_seconds = integer(value, "cache_ttl_seconds")?;
     }
     if let Some(value) = table.get("parallelism") {
-        settings.parallelism = positive_integer(value, "parallelism")? as usize;
+        settings.parallelism = bounded_integer(value, "parallelism", 64)? as usize;
     }
     Ok(settings)
 }
@@ -239,6 +288,17 @@ fn positive_integer(value: &toml::Value, name: &str) -> io::Result<u64> {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,
             format!("[options].{name} must be greater than zero"),
+        ));
+    }
+    Ok(value)
+}
+
+fn bounded_integer(value: &toml::Value, name: &str, maximum: u64) -> io::Result<u64> {
+    let value = integer(value, name)?;
+    if value > maximum {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            format!("[options].{name} must be at most {maximum}"),
         ));
     }
     Ok(value)
@@ -256,9 +316,33 @@ fn integer(value: &toml::Value, name: &str) -> io::Result<u64> {
         })
 }
 
-fn is_url(value: &str) -> bool {
+pub(crate) fn is_url(value: &str) -> bool {
     (value.starts_with("http://") || value.starts_with("https://"))
-        && !value.contains(char::is_whitespace)
+        && !value.chars().any(|character| {
+            character.is_control()
+                || character.is_whitespace()
+                || matches!(character, '"' | '\'' | '\\' | '$' | '`')
+        })
+}
+
+fn redact_url(value: &str) -> String {
+    let Some(scheme) = value.find("://") else {
+        return value.to_owned();
+    };
+    let authority_start = scheme + 3;
+    let authority_end = value[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(value.len(), |offset| authority_start + offset);
+    let authority = &value[authority_start..authority_end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    format!(
+        "{}://{}{}",
+        &value[..scheme],
+        authority,
+        &value[authority_end..]
+    )
 }
 
 fn string_table(document: &toml::Table, name: &str) -> io::Result<BTreeMap<String, String>> {
@@ -369,6 +453,25 @@ mod tests {
     fn rejects_unknown_config_sections() {
         let path = env::temp_dir().join(format!("lm-config-invalid-{}.toml", std::process::id()));
         fs::write(&path, "[unknown]\nvalue = true\n").unwrap();
+        assert!(Config::load(Some(&path)).is_err());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_urls_that_can_escape_managed_shell_values() {
+        let path = env::temp_dir().join(format!(
+            "lm-config-unsafe-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "[mirrors]\nunsafe = \"https://mirror.example/\\\"\"\n",
+        )
+        .unwrap();
         assert!(Config::load(Some(&path)).is_err());
         fs::remove_file(path).unwrap();
     }

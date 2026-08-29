@@ -23,15 +23,17 @@ pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
             .map(|value| value.trim().to_owned())
     });
     let configured = source.as_deref().is_some_and(|value| value == expected);
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 fn config_path() -> io::Result<PathBuf> {

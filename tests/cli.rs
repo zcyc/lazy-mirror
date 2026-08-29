@@ -30,3 +30,71 @@ fn invalid_config_has_a_configuration_exit_code() {
     assert_eq!(output.status.code(), Some(2));
     std::fs::remove_file(path).unwrap();
 }
+
+#[test]
+fn effective_config_is_machine_readable_and_redacts_credentials() {
+    let path = std::env::temp_dir().join(format!(
+        "lm-cli-config-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    std::fs::write(
+        &path,
+        "[mirrors]\nprivate = \"https://user:secret@example.com/simple\"\n[defaults]\npip = \"private\"\n",
+    )
+    .unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args([
+            "--config",
+            path.to_str().unwrap(),
+            "config",
+            "show",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["mirrors"]["private"], "https://example.com/simple");
+    assert_eq!(value["defaults"]["pip"], "private");
+    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn chsrc_target_aliases_and_plan_are_available() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["list", "lua", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["target"], "luarocks");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args([
+            "plan",
+            "lua",
+            "https://mirror.example.com",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["desired"], "https://mirror.example.com");
+}
+
+#[test]
+fn invalid_parallelism_has_a_configuration_exit_code() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["check", "docker", "--parallelism", "0"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(2));
+}

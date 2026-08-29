@@ -49,11 +49,14 @@ pub fn bundle_unset() -> io::Result<()> {
 pub fn gem_status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("gem")?;
     let sources = crate::command_output("gem", &["sources", "--list"])?;
-    Ok(crate::ToolStatus {
-        configured: sources.contains(expected),
-        detail: sources.replace('\n', "; "),
+    let source = first_url(&sources);
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        sources.contains(expected),
+        source,
+        None,
+        sources.replace('\n', "; "),
+    ))
 }
 
 pub fn bundle_status(expected: &str) -> io::Result<crate::ToolStatus> {
@@ -63,9 +66,19 @@ pub fn bundle_status(expected: &str) -> io::Result<crate::ToolStatus> {
         &["config", "get", "--global", "mirror.https://rubygems.org"],
     )
     .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
-        configured: mirror.contains(expected),
-        detail: mirror.replace('\n', "; "),
+    let source = first_url(&mirror);
+    Ok(crate::ToolStatus::new(
         version,
-    })
+        mirror.contains(expected),
+        source,
+        None,
+        mirror.replace('\n', "; "),
+    ))
+}
+
+fn first_url(value: &str) -> Option<String> {
+    value
+        .split_whitespace()
+        .find(|value| value.starts_with("http://") || value.starts_with("https://"))
+        .map(str::to_owned)
 }

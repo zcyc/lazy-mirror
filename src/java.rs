@@ -62,15 +62,17 @@ pub fn maven_status(expected: &str) -> io::Result<crate::ToolStatus> {
     let path = crate::home_file(".m2/settings.xml")?;
     let source = file_value(&path, "<url>", "</url>")?;
     let configured = source.as_deref().is_some_and(|value| value == expected);
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 pub fn gradle_status(expected: &str) -> io::Result<crate::ToolStatus> {
@@ -78,15 +80,17 @@ pub fn gradle_status(expected: &str) -> io::Result<crate::ToolStatus> {
     let path = gradle_config_path()?;
     let source = file_value(&path, "url '", "'")?;
     let configured = source.as_deref().is_some_and(|value| value == expected);
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 fn gradle_config_path() -> io::Result<PathBuf> {

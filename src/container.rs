@@ -32,15 +32,17 @@ pub fn containerd_status(command: &str) -> io::Result<crate::ToolStatus> {
         .as_deref()
         .and_then(|content| content.strip_prefix(CONTAINERD_PREFIX))
         .and_then(|content| content.split_once("\"]").map(|(mirror, _)| mirror));
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.map(str::to_owned),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or("not configured"),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 pub fn podman_set(mirror: &str) -> io::Result<()> {
@@ -74,15 +76,17 @@ pub fn podman_status() -> io::Result<crate::ToolStatus> {
                 .split_once('"')
                 .map(|(mirror, _)| mirror)
         });
-    Ok(crate::ToolStatus {
+    Ok(crate::ToolStatus::new(
+        version,
         configured,
-        detail: format!(
+        source.map(str::to_owned),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or("not configured"),
             path.display()
         ),
-        version,
-    })
+    ))
 }
 
 fn containerd_path() -> io::Result<PathBuf> {

@@ -8,16 +8,21 @@ const APT_PREFIX: &str = "# managed by lazy-mirror\n";
 pub fn apt_set(mirror: &str, scope: Scope) -> io::Result<()> {
     require_system("apt", scope)?;
     let path = apt_path()?;
-    let distribution = std::env::var("LM_APT_DISTRIBUTION").unwrap_or_else(|_| "stable".to_owned());
-    let components = std::env::var("LM_APT_COMPONENTS").unwrap_or_else(|_| "main".to_owned());
-    let line = if mirror.starts_with("deb ") || mirror.starts_with("deb-src ") {
-        mirror.to_owned()
+    let content = if mirror.starts_with("deb ") || mirror.starts_with("deb-src ") {
+        format!("{APT_PREFIX}{mirror}\n")
     } else {
-        format!("deb {mirror} {distribution} {components}")
+        let suites = std::env::var("LM_APT_SUITES")
+            .map(|value| value.split_whitespace().map(str::to_owned).collect())
+            .unwrap_or_else(|_| vec![apt_distribution()]);
+        let components = std::env::var("LM_APT_COMPONENTS").unwrap_or_else(|_| "main".to_owned());
+        let lines = suites
+            .iter()
+            .map(|suite| format!("deb {mirror} {suite} {components}"))
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!("{APT_PREFIX}{lines}\n")
     };
-    crate::write_with_backup_if(&path, &format!("{APT_PREFIX}{line}\n"), |content| {
-        content.starts_with(APT_PREFIX)
-    })
+    crate::write_with_backup_if(&path, &content, |content| content.starts_with(APT_PREFIX))
 }
 
 pub fn apt_unset(scope: Scope) -> io::Result<()> {
@@ -34,15 +39,17 @@ pub fn apt_status(scope: Scope) -> io::Result<crate::ToolStatus> {
             .map(str::trim)
             .map(str::to_owned)
     });
-    Ok(crate::ToolStatus {
-        version: crate::command_output("apt", &["--version"]).unwrap_or_else(|_| "apt".to_owned()),
-        configured: source.is_some(),
-        detail: format!(
+    Ok(crate::ToolStatus::new(
+        crate::command_output("apt", &["--version"]).unwrap_or_else(|_| "apt".to_owned()),
+        source.is_some(),
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "source={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
-    })
+    ))
 }
 
 pub fn apk_set(mirror: &str, scope: Scope) -> io::Result<()> {
@@ -71,15 +78,465 @@ pub fn apk_status(scope: Scope) -> io::Result<crate::ToolStatus> {
             .map(str::trim)
             .map(str::to_owned)
     });
-    Ok(crate::ToolStatus {
-        version: crate::command_output("apk", &["--version"]).unwrap_or_else(|_| "apk".to_owned()),
-        configured: source.is_some(),
-        detail: format!(
+    Ok(crate::ToolStatus::new(
+        crate::command_output("apk", &["--version"]).unwrap_or_else(|_| "apk".to_owned()),
+        source.is_some(),
+        source.clone(),
+        Some(path.clone()),
+        format!(
             "repositories={}; config={}",
             source.unwrap_or_else(|| "not configured".to_owned()),
             path.display()
         ),
+    ))
+}
+
+pub fn env_set(name: &str, variable: &str, mirror: &str, scope: Scope) -> io::Result<()> {
+    profile_set(name, scope, &format!("export {variable}=\"{mirror}\""))
+}
+
+pub fn env_unset(name: &str, scope: Scope) -> io::Result<()> {
+    profile_unset(name, scope)
+}
+
+pub fn env_status(
+    command: &str,
+    name: &str,
+    variable: &str,
+    expected: &str,
+    scope: Scope,
+) -> io::Result<crate::ToolStatus> {
+    let mut status = profile_status(command, name, variable, scope)?;
+    status.configured = status.source.as_deref() == Some(expected);
+    Ok(status)
+}
+
+pub fn luarocks_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let path = config_path("luarocks", scope)?;
+    crate::write_with_backup_if(
+        &path,
+        &format!(
+            "-- managed by lazy-mirror\nrocks_servers = {{ [\"lazy-mirror\"] = \"{mirror}\" }}\n"
+        ),
+        |content| content.starts_with("-- managed by lazy-mirror\n"),
+    )
+}
+
+pub fn luarocks_unset(scope: Scope) -> io::Result<()> {
+    crate::remove_with_backup_if(&config_path("luarocks", scope)?, |content| {
+        content.starts_with("-- managed by lazy-mirror\n")
     })
+}
+
+pub fn luarocks_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let path = config_path("luarocks", scope)?;
+    file_status("luarocks", &path, expected, |content| {
+        content
+            .split_once("[\"lazy-mirror\"] = \"")
+            .and_then(|(_, value)| value.split_once('"').map(|(value, _)| value.to_owned()))
+    })
+}
+
+pub fn clojure_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let path = config_path("clojure", scope)?;
+    crate::write_with_backup_if(
+        &path,
+        &format!(
+            ";; managed by lazy-mirror\n{{:mvn/repos {{:central {{:url \"{mirror}\"}} :clojars {{:url \"{mirror}\"}}}}}}\n"
+        ),
+        |content| content.starts_with(";; managed by lazy-mirror\n"),
+    )
+    .map_err(|error| {
+        if error.kind() == io::ErrorKind::AlreadyExists {
+            io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                format!(
+                    "{} already contains unmanaged EDN; set LM_CLOJURE_CONFIG to a dedicated file",
+                    path.display()
+                ),
+            )
+        } else {
+            error
+        }
+    })
+}
+
+pub fn clojure_unset(scope: Scope) -> io::Result<()> {
+    crate::remove_with_backup_if(&config_path("clojure", scope)?, |content| {
+        content.starts_with(";; managed by lazy-mirror\n")
+    })
+}
+
+pub fn clojure_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let path = config_path("clojure", scope)?;
+    file_status("clojure", &path, expected, |content| {
+        content
+            .split_once(":central {:url \"")
+            .and_then(|(_, value)| value.split_once('"').map(|(value, _)| value.to_owned()))
+    })
+}
+
+pub fn cabal_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let path = config_path("cabal", scope)?;
+    crate::write_with_backup_if(
+        &path,
+        &format!(
+            "-- managed by lazy-mirror\nrepository hackage.haskell.org\n  url: {mirror}\n  secure: True\n"
+        ),
+        |content| content.starts_with("-- managed by lazy-mirror\n"),
+    )
+}
+
+pub fn cabal_unset(scope: Scope) -> io::Result<()> {
+    crate::remove_with_backup_if(&config_path("cabal", scope)?, |content| {
+        content.starts_with("-- managed by lazy-mirror\n")
+    })
+}
+
+pub fn cabal_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let path = config_path("cabal", scope)?;
+    file_status("cabal", &path, expected, |content| {
+        content
+            .lines()
+            .find_map(|line| line.trim().strip_prefix("url:").map(str::trim))
+            .map(str::to_owned)
+    })
+}
+
+pub fn stack_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let path = config_path("stack", scope)?;
+    crate::write_with_backup_if(
+        &path,
+        &format!("# managed by lazy-mirror\npackage-indices:\n- download-prefix: {mirror}\n"),
+        |content| content.starts_with("# managed by lazy-mirror\n"),
+    )
+}
+
+pub fn stack_unset(scope: Scope) -> io::Result<()> {
+    crate::remove_with_backup_if(&config_path("stack", scope)?, |content| {
+        content.starts_with("# managed by lazy-mirror\n")
+    })
+}
+
+pub fn stack_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let path = config_path("stack", scope)?;
+    file_status("stack", &path, expected, |content| {
+        content
+            .lines()
+            .find_map(|line| {
+                line.trim()
+                    .strip_prefix("- download-prefix:")
+                    .map(str::trim)
+            })
+            .map(str::to_owned)
+    })
+}
+
+pub fn cocoapods_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    require_user("cocoapods", scope)?;
+    let _ = crate::run("pod", &["repo", "remove", "lazy-mirror"]);
+    crate::run("pod", &["repo", "add", "lazy-mirror", mirror])
+}
+
+pub fn cocoapods_unset(scope: Scope) -> io::Result<()> {
+    require_user("cocoapods", scope)?;
+    crate::run("pod", &["repo", "remove", "lazy-mirror"])
+}
+
+pub fn cocoapods_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    require_user("cocoapods", scope)?;
+    let version = crate::command_version("pod")?;
+    let detail = crate::command_output("pod", &["repo", "list"])
+        .unwrap_or_else(|_| "not configured".to_owned());
+    Ok(crate::ToolStatus::new(
+        version,
+        detail.contains("lazy-mirror") && detail.contains(expected),
+        None,
+        None,
+        detail,
+    ))
+}
+
+pub fn flatpak_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    require_user("flatpak", scope)?;
+    crate::run("flatpak", &["remote-modify", "--url", mirror, "flathub"]).or_else(|_| {
+        crate::run(
+            "flatpak",
+            &["remote-add", "--if-not-exists", "flathub", mirror],
+        )
+    })
+}
+
+pub fn flatpak_unset(scope: Scope) -> io::Result<()> {
+    require_user("flatpak", scope)?;
+    crate::run(
+        "flatpak",
+        &[
+            "remote-modify",
+            "--url",
+            "https://dl.flathub.org/repo/",
+            "flathub",
+        ],
+    )
+}
+
+pub fn flatpak_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    require_user("flatpak", scope)?;
+    let version = crate::command_version("flatpak")?;
+    let detail = crate::command_output("flatpak", &["remotes", "--columns=name,url"])
+        .unwrap_or_else(|_| "not configured".to_owned());
+    let source = detail.lines().find_map(|line| {
+        let mut fields = line.split_whitespace();
+        (fields.next() == Some("flathub"))
+            .then(|| fields.next())
+            .flatten()
+    });
+    Ok(crate::ToolStatus::new(
+        version,
+        source == Some(expected),
+        source.map(str::to_owned),
+        None,
+        detail,
+    ))
+}
+
+pub fn emacs_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    require_user("emacs", scope)?;
+    let path = config_path("emacs", scope)?;
+    crate::update_named_block(
+        &path,
+        "emacs",
+        ";;",
+        &format!("(setq package-archives '((\"mirror\" . \"{mirror}\")))"),
+    )
+}
+
+pub fn emacs_unset(scope: Scope) -> io::Result<()> {
+    require_user("emacs", scope)?;
+    crate::remove_named_block(&config_path("emacs", scope)?, "emacs", ";;")
+}
+
+pub fn emacs_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    require_user("emacs", scope)?;
+    let path = config_path("emacs", scope)?;
+    file_status("emacs", &path, expected, |content| {
+        content
+            .split_once("(\"mirror\" . \"")
+            .and_then(|(_, value)| value.split_once('"').map(|(value, _)| value.to_owned()))
+    })
+}
+
+pub fn tex_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    require_user("tex", scope)?;
+    crate::run("tlmgr", &["option", "repository", mirror])
+}
+
+pub fn tex_unset(scope: Scope) -> io::Result<()> {
+    require_user("tex", scope)?;
+    crate::run(
+        "tlmgr",
+        &[
+            "option",
+            "repository",
+            "https://mirror.ctan.org/systems/texlive/tlnet",
+        ],
+    )
+}
+
+pub fn tex_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    require_user("tex", scope)?;
+    let version = crate::command_version("tlmgr")?;
+    let detail = crate::command_output("tlmgr", &["option", "repository"])
+        .unwrap_or_else(|_| "not configured".to_owned());
+    let source = detail
+        .lines()
+        .find_map(|line| line.find("http").map(|index| &line[index..]))
+        .map(str::trim)
+        .map(str::to_owned);
+    Ok(crate::ToolStatus::new(
+        version,
+        source.as_deref() == Some(expected),
+        source,
+        None,
+        detail,
+    ))
+}
+
+pub fn os_set(name: &str, mirror: &str, scope: Scope) -> io::Result<()> {
+    validate_os_scope(name, scope)?;
+    let path = os_path(name)?;
+    if name == "gentoo" {
+        return crate::update_named_managed_block(
+            &path,
+            "gentoo",
+            &format!("GENTOO_MIRRORS=\"{mirror}\""),
+        );
+    }
+    let content = os_content(name, mirror);
+    crate::write_with_backup_if(&path, &content, |current| {
+        current.starts_with(&format!("# managed by lazy-mirror:{name}\n"))
+    })
+}
+
+pub fn os_unset(name: &str, scope: Scope) -> io::Result<()> {
+    validate_os_scope(name, scope)?;
+    if name == "gentoo" {
+        return crate::remove_named_managed_block(&os_path(name)?, "gentoo");
+    }
+    crate::remove_with_backup_if(&os_path(name)?, |content| {
+        content.starts_with(&format!("# managed by lazy-mirror:{name}\n"))
+    })
+}
+
+pub fn os_status(name: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    validate_os_scope(name, scope)?;
+    let path = os_path(name)?;
+    if name == "gentoo" {
+        return file_status("emerge", &path, "", |content| {
+            content.lines().find_map(|line| {
+                line.trim()
+                    .strip_prefix("GENTOO_MIRRORS=\"")
+                    .and_then(|value| value.strip_suffix('"'))
+                    .map(str::to_owned)
+            })
+        });
+    }
+    file_status(name, &path, "", |content| {
+        content.lines().find_map(|line| {
+            line.split_whitespace()
+                .find(|value| value.starts_with("http://") || value.starts_with("https://"))
+                .map(str::to_owned)
+        })
+    })
+}
+
+fn file_status<F>(
+    command: &str,
+    path: &std::path::Path,
+    expected: &str,
+    source: F,
+) -> io::Result<crate::ToolStatus>
+where
+    F: Fn(&str) -> Option<String>,
+{
+    let content = std::fs::read_to_string(path).ok();
+    let source = content.as_deref().and_then(source);
+    let version = crate::command_version(command).unwrap_or_else(|_| command.to_owned());
+    Ok(crate::ToolStatus::new(
+        version,
+        source.as_deref().is_some_and(|value| {
+            expected.is_empty() || value.trim_end_matches('/') == expected.trim_end_matches('/')
+        }),
+        source.clone(),
+        Some(path.to_path_buf()),
+        format!(
+            "source={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
+    ))
+}
+
+fn config_path(name: &str, scope: Scope) -> io::Result<PathBuf> {
+    if let Some(path) = std::env::var_os(format!("LM_{}_CONFIG", name.to_uppercase())) {
+        return Ok(path.into());
+    }
+    match scope {
+        Scope::Project => {
+            let relative = match name {
+                "clojure" => ".clojure/deps.edn".to_owned(),
+                "emacs" => ".emacs".to_owned(),
+                _ => format!(".{name}/config"),
+            };
+            std::env::current_dir().map(|path| path.join(relative))
+        }
+        Scope::User => crate::home_file(match name {
+            "luarocks" => ".luarocks/config.lua",
+            "clojure" => ".clojure/deps.edn",
+            "cabal" => ".cabal/config",
+            "stack" => ".stack/config.yaml",
+            "emacs" => ".emacs",
+            _ => ".config/lazy-mirror/config",
+        }),
+        Scope::System => Ok(PathBuf::from(format!("/etc/{name}/lazy-mirror.conf"))),
+    }
+}
+
+fn os_path(name: &str) -> io::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("LM_OS_SOURCES_FILE") {
+        return Ok(path.into());
+    }
+    if name == "termux" {
+        return Ok(std::env::var_os("PREFIX")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| PathBuf::from("$PREFIX"))
+            .join("etc/apt/sources.list"));
+    }
+    let path = match name {
+        "fedora" | "rocky" | "alma" | "openeuler" | "openanolis" => {
+            "/etc/yum.repos.d/lazy-mirror.repo"
+        }
+        "opensuse" => "/etc/zypp/repos.d/lazy-mirror.repo",
+        "arch" | "archlinuxcn" | "manjaro" | "msys2" => "/etc/pacman.d/mirrorlist",
+        "gentoo" => "/etc/portage/make.conf",
+        "voidlinux" => "/etc/xbps.d/00-lazy-mirror.conf",
+        "solus" => "/etc/solus/repo.conf",
+        "ros" => "/etc/apt/sources.list.d/lazy-mirror-ros.list",
+        "openwrt" => "/etc/opkg/distfeeds.conf",
+        "freebsd" => "/etc/pkg/FreeBSD.conf",
+        "openbsd" => "/etc/installurl",
+        "netbsd" => "/etc/pkgin/repositories.conf",
+        _ => "/etc/apt/sources.list.d/lazy-mirror.list",
+    };
+    Ok(PathBuf::from(path))
+}
+
+fn os_content(name: &str, mirror: &str) -> String {
+    let prefix = format!("# managed by lazy-mirror:{name}\n");
+    match name {
+        "fedora" | "rocky" | "alma" | "openeuler" | "openanolis" => {
+            format!("{prefix}[lazy-mirror]\nname=lazy-mirror\nbaseurl={mirror}\nenabled=1\ngpgcheck=1\n")
+        }
+        "opensuse" => format!("{prefix}[lazy-mirror]\ntype=rpm-md\nbaseurl={mirror}\nenabled=1\n"),
+        "arch" | "archlinuxcn" | "manjaro" | "msys2" => {
+            format!("{prefix}Server = {mirror}/$repo/os/$arch\n")
+        }
+        "voidlinux" => format!("{prefix}repository={mirror}/current/$XBPS_ARCH\n"),
+        "solus" => format!("{prefix}SolusURL = {mirror}\n"),
+        "openwrt" => format!("{prefix}src/gz lazy-mirror {mirror}\n"),
+        "freebsd" => format!("{prefix}FreeBSD: {{ url: \"{mirror}\" }}\n"),
+        "openbsd" => format!("{prefix}{mirror}\n"),
+        "netbsd" => format!("{prefix}{mirror}\n"),
+        "termux" => format!("{prefix}{mirror}\n"),
+        "ros" => {
+            let distribution = std::env::var("LM_ROS_DISTRIBUTION")
+                .or_else(|_| std::env::var("ROS_DISTRO"))
+                .unwrap_or_else(|_| apt_distribution());
+            format!("{prefix}deb {mirror} {distribution} main\n")
+        }
+        _ => {
+            let distribution =
+                std::env::var("LM_APT_DISTRIBUTION").unwrap_or_else(|_| "stable".to_owned());
+            let components =
+                std::env::var("LM_APT_COMPONENTS").unwrap_or_else(|_| "main".to_owned());
+            format!("{prefix}deb {mirror} {distribution} {components}\n")
+        }
+    }
+}
+
+fn validate_os_scope(name: &str, scope: Scope) -> io::Result<()> {
+    let user_scope = matches!(name, "msys2" | "termux");
+    if (user_scope && scope == Scope::User) || (!user_scope && scope == Scope::System) {
+        Ok(())
+    } else {
+        Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!(
+                "{name} supports {} scope only",
+                if user_scope { "user" } else { "system" }
+            ),
+        ))
+    }
 }
 
 pub fn brew_set(mirror: &str, scope: Scope) -> io::Result<()> {
@@ -150,11 +607,14 @@ pub fn hex_status(scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("mix")?;
     let value = crate::command_output("mix", &["hex.config", "mirror_url"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
+    let source = (value != "not configured").then(|| value.clone());
+    Ok(crate::ToolStatus::new(
         version,
-        configured: value != "not configured",
-        detail: format!("mirror_url={value}"),
-    })
+        source.is_some(),
+        source,
+        None,
+        format!("mirror_url={value}"),
+    ))
 }
 
 pub fn julia_set(mirror: &str, scope: Scope) -> io::Result<()> {
@@ -208,11 +668,20 @@ pub fn winget_status(scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("winget")?;
     let detail = crate::command_output("winget", &["source", "list"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
+    let source = detail
+        .lines()
+        .skip_while(|line| !line.contains("lazy-mirror"))
+        .skip(1)
+        .flat_map(str::split_whitespace)
+        .find(|value| value.starts_with("http://") || value.starts_with("https://"))
+        .map(str::to_owned);
+    Ok(crate::ToolStatus::new(
         version,
-        configured: detail.contains("lazy-mirror"),
+        detail.contains("lazy-mirror"),
+        source,
+        None,
         detail,
-    })
+    ))
 }
 
 pub fn opam_set(mirror: &str, scope: Scope) -> io::Result<()> {
@@ -234,11 +703,21 @@ pub fn opam_status(scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("opam")?;
     let detail = crate::command_output("opam", &["repository", "list"])
         .unwrap_or_else(|_| "not configured".to_owned());
-    Ok(crate::ToolStatus {
+    let source = detail
+        .lines()
+        .find(|line| line.contains("lazy-mirror"))
+        .and_then(|line| {
+            line.split_whitespace()
+                .find(|value| value.starts_with("http://") || value.starts_with("https://"))
+        })
+        .map(str::to_owned);
+    Ok(crate::ToolStatus::new(
         version,
-        configured: detail.contains("lazy-mirror"),
+        detail.contains("lazy-mirror"),
+        source,
+        None,
         detail,
-    })
+    ))
 }
 
 fn profile_set(name: &str, scope: Scope, block: &str) -> io::Result<()> {
@@ -264,11 +743,21 @@ fn profile_status(
             .contains(&marker)
             .then(|| content.lines().find(|line| line.contains(variable)))
             .flatten()
+            .and_then(|line| {
+                line.split_once('=')?
+                    .1
+                    .trim()
+                    .strip_prefix('"')?
+                    .strip_suffix('"')
+            })
             .map(str::to_owned)
     });
+    let source = value.clone().or_else(|| in_profile.clone());
     Ok(crate::ToolStatus {
         version,
-        configured: value.is_some() || in_profile.is_some(),
+        configured: source.is_some(),
+        source,
+        path: Some(path.clone()),
         detail: format!(
             "{variable}={}; profile={}",
             value
@@ -325,4 +814,20 @@ fn apk_path() -> io::Result<PathBuf> {
     Ok(std::env::var_os("LM_APK_REPOSITORIES_FILE")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("/etc/apk/repositories")))
+}
+
+fn apt_distribution() -> String {
+    if let Ok(distribution) = std::env::var("LM_APT_DISTRIBUTION") {
+        return distribution;
+    }
+    std::fs::read_to_string("/etc/os-release")
+        .ok()
+        .and_then(|content| {
+            content.lines().find_map(|line| {
+                line.strip_prefix("VERSION_CODENAME=")
+                    .or_else(|| line.strip_prefix("UBUNTU_CODENAME="))
+                    .map(|value| value.trim_matches('"').to_owned())
+            })
+        })
+        .unwrap_or_else(|| "stable".to_owned())
 }

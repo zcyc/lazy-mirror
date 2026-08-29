@@ -18,15 +18,23 @@ lm measure docker               # 并发检测镜像并显示 HTTP 状态/耗时
 lm check docker --format json  # 按 Docker Registry API 路径校验
 lm get go                      # 查看当前配置、实际 source 和作用域
 lm get all --format json
+lm get all --only-installed
+lm doctor all --only-installed  # 检查工具、配置和 mirror
+lm plan docker daocloud         # 显示将要修改的路径和目标值
+lm diff docker daocloud --format json
+lm config validate
+lm config show --format json
 lm set docker daocloud
 lm set pip first              # 使用内置列表第一个源
 lm set docker https://mirror.example.com
 lm set cargo rsproxy --scope project --dry-run
+lm set all --atomic             # 可回滚 adapter 的全量修改
 lm reset docker
 ```
 
 `list`、`measure`、`check`、`get` 支持 `--format table|json`。
-`measure` 和 `check` 支持 `--cache-ttl SECONDS`、`--no-cache`。
+`measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
+`--only-installed`、`--parallelism 1..64`。`get`、`plan` 也支持 `--only-installed`。
 命令别名为：`ls/l`、`m/cesu`、`verify`、`g`、`s`、`r`。
 
 ## TOML 配置
@@ -65,7 +73,8 @@ parallelism = 4
 `check` 按工具协议探测：Docker 使用 `/v2/`，Python 使用 `/simple/`，NuGet 使用
 `/v3/index.json`，Hugging Face 使用 `/api/models?limit=1`。结果区分
 `healthy`、`auth-required`、`rate-limited`、`unsupported`、`unavailable` 和网络错误；
-只有 `healthy` 返回成功。健康结果可以缓存到系统 cache 目录，或用 `LM_CACHE_FILE` 指定。
+一般只有 `healthy` 返回成功，Docker/containerd/Podman 的 `auth-required` 代表 Registry
+已可达，也返回成功。健康结果可以缓存到系统 cache 目录，或用 `LM_CACHE_FILE` 指定。
 
 私有 mirror 的凭证只从环境变量读取，不写入配置或输出：
 
@@ -77,6 +86,8 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 文件修改使用锁、临时文件和原子替换，并保留已有权限。原有用户配置会保存为
 `.lazy-mirror.bak`；reset 发现受管文件被外部修改时会拒绝恢复。`set all` 会先预检所有
 目标的选择器和作用域，再按顺序修改；执行期失败会立即停止，不会继续修改后续目标。
+`set all --atomic` 只允许能读取并恢复旧 source 的 adapter，会在失败时按旧 source 逆序恢复；
+无法证明可恢复的外部命令 adapter 会在预检阶段拒绝。
 
 ## 支持的项目
 
@@ -85,8 +96,9 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 | Node.js | npm、pnpm、Yarn Classic、Yarn Berry、Bun |
 | Python | pip、uv、PDM、Poetry |
 | JVM | Maven、Gradle、sbt |
-| 其他语言 | Go、Cargo/Rust、Rustup、RubyGems/Bundler、Composer/PHP、Conda/Mamba、CRAN/R、NuGet/.NET、Dart、Flutter、Hugging Face、Hex/Mix、Julia、CPAN/Perl、opam |
-| 系统/平台 | APT/Debian/Ubuntu、Alpine APK、Homebrew、WinGet |
+| 其他语言 | Go、Cargo/Rust、Rustup、RubyGems/Bundler、Composer/PHP、Conda/Mamba、CRAN/R、NuGet/.NET、Dart、Flutter、Hugging Face、Hex/Mix、Julia、CPAN/Perl、opam、Rye、nvm、LuaRocks、Clojure/Clojars、Haskell/Hackage/Cabal/Stack、OCaml |
+| 系统/平台 | APT/Debian/Ubuntu、Alpine APK、Fedora、OpenSUSE、Kali、Arch、Manjaro、Gentoo、Rocky、Alma、Void、Solus、ROS、Raspberry Pi、Armbian、OpenWrt、openEuler、OpenAnolis、OpenKylin、Deepin、Linux Mint、MSYS2、Termux、FreeBSD、OpenBSD、NetBSD |
+| 软件/桌面 | Homebrew、WinGet、CocoaPods、Flathub/Flatpak、Nix、Guix、Emacs/ELPA、TeX/CTAN |
 | 容器 | Docker Engine、containerd/nerdctl、Podman |
 
 Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN 使用受管 shell 环境变量块；
@@ -94,9 +106,13 @@ Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN 使用受管 sh
 Cargo 和 uv 使用 TOML 结构化合并，Docker 使用 JSON 合并。
 
 APT 默认写入 `/etc/apt/sources.list.d/lazy-mirror.list`，可用 `LM_APT_SOURCES_FILE`
-覆盖；发行版和组件可用 `LM_APT_DISTRIBUTION`、`LM_APT_COMPONENTS` 覆盖。Alpine 使用
+覆盖；发行版会从 `/etc/os-release` 的 `VERSION_CODENAME`/`UBUNTU_CODENAME` 推断，
+也可用 `LM_APT_DISTRIBUTION`、`LM_APT_SUITES`、`LM_APT_COMPONENTS` 覆盖。Alpine 使用
 `LM_APK_REPOSITORIES_FILE` 或 `/etc/apk/repositories`。系统源只支持 `--scope system`，
 不会自动执行 apt/apk 更新。
+
+没有稳定内置源语义的项目仍然支持 URL/TOML 覆盖，但不会伪造内置 mirror。系统发行版目标
+同样只接受显式 URL 或 `[mirrors]` 配置，并且只在指定 scope 写入。
 
 ## Docker 与 Hugging Face
 
@@ -127,9 +143,10 @@ lm set hf https://hf.example.com --scope project
 
 ## 与 chsrc 的边界
 
-命令形状已对齐 `list/measure/get/set/reset`、镜像名/URL 覆盖、dry-run、作用域和 JSON
-自动化输出。当前内置覆盖常见开发工具、容器运行时和主要系统平台；没有稳定官方 mirror
-语义的工具允许自定义 URL，但不会伪造内置源。
+命令形状已对齐 `list/measure/get/set/reset`、镜像名/URL 覆盖、`first`、dry-run、作用域
+和 JSON 自动化输出，并补充 `doctor`、`plan/diff`、`config validate/show`。目标和别名
+覆盖 chsrc 当前公开清单；没有稳定官方 mirror 语义的工具允许自定义 URL，但不会伪造
+内置源。
 
-这是一次破坏性 CLI 重构：旧的 `unset`、`status`、`doctor` 命令，以及
-`lm set docker --mirror NAME` 形式已删除；旧配置不会自动迁移。
+这是一次破坏性 CLI 重构：旧的 `unset`、`status` 命令，以及
+`lm set docker --mirror NAME` 形式已删除；旧配置不会自动迁移。`doctor` 是新的诊断命令。
