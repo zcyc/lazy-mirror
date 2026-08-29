@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
+use crate::config::Scope;
 use crate::{command_version, ToolStatus};
 
 const REGISTRY_MIRRORS: &str = "registry-mirrors";
@@ -14,7 +15,7 @@ const CURRENT_SUFFIX: &str = ".lazy-mirror.current";
 
 const MIRRORS: &[(&str, &str)] = &[("daocloud", "https://docker.m.daocloud.io")];
 
-pub fn set(mirror: &str) -> io::Result<()> {
+pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
     if !(mirror.starts_with("http://") || mirror.starts_with("https://"))
         || mirror.chars().any(char::is_whitespace)
     {
@@ -23,16 +24,16 @@ pub fn set(mirror: &str) -> io::Result<()> {
             format!("Docker mirror must be an HTTP(S) URL: {mirror}"),
         ));
     }
-    set_at(&config_path()?, mirror)
+    set_at(&config_path(scope)?, mirror)
 }
 
-pub fn unset() -> io::Result<()> {
-    unset_at(&config_path()?)
+pub fn unset(scope: Scope) -> io::Result<()> {
+    unset_at(&config_path(scope)?)
 }
 
-pub fn status() -> io::Result<ToolStatus> {
+pub fn status(scope: Scope) -> io::Result<ToolStatus> {
     let version = command_version("docker")?;
-    let path = config_path()?;
+    let path = config_path(scope)?;
     let config = read_config(&path)?;
     let source = config.as_ref().and_then(configured_mirror);
     let (configured, detail) = match config {
@@ -177,6 +178,14 @@ fn set_at(path: &Path, url: &str) -> io::Result<()> {
 fn unset_at(path: &Path) -> io::Result<()> {
     let _lock = crate::lock(path)?;
     let Some(config) = read_config(path)? else {
+        let backup = backup_path(path);
+        if backup.exists() {
+            restore_file(&backup, path)?;
+            fs::remove_file(backup)?;
+        } else {
+            let _ = fs::remove_file(created_marker_path(path));
+        }
+        let _ = fs::remove_file(current_marker_path(path));
         return Ok(());
     };
     if !is_managed(path, &config)? {
@@ -298,7 +307,13 @@ fn mirror_name(url: &str) -> Option<&'static str> {
         .find_map(|(name, candidate)| (*candidate == url).then_some(*name))
 }
 
-fn config_path() -> io::Result<PathBuf> {
+fn config_path(scope: Scope) -> io::Result<PathBuf> {
+    if scope == Scope::Project {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker does not support project scope",
+        ));
+    }
     if let Some(path) = env::var_os(CONFIG_ENV) {
         if path.is_empty() {
             return Err(io::Error::new(
@@ -309,28 +324,34 @@ fn config_path() -> io::Result<PathBuf> {
         return Ok(PathBuf::from(path));
     }
 
-    #[cfg(target_os = "linux")]
-    {
-        if env::var_os("DOCKER_HOST")
-            .is_some_and(|host| host.to_string_lossy().contains("/run/user/"))
-        {
-            let config_home = env::var_os("XDG_CONFIG_HOME")
-                .map(PathBuf::from)
-                .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory")
-                })?;
-            return Ok(config_home.join("docker/daemon.json"));
+    match scope {
+        Scope::Project => unreachable!(),
+        Scope::User => {
+            #[cfg(target_os = "linux")]
+            {
+                let config_home = env::var_os("XDG_CONFIG_HOME")
+                    .map(PathBuf::from)
+                    .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
+                    .ok_or_else(|| {
+                        io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory")
+                    })?;
+                Ok(config_home.join("docker/daemon.json"))
+            }
+            #[cfg(not(target_os = "linux"))]
+            {
+                crate::home_file(".docker/daemon.json")
+            }
         }
-        return Ok(PathBuf::from("/etc/docker/daemon.json"));
-    }
-    #[cfg(target_os = "windows")]
-    {
-        return Ok(PathBuf::from(r"C:\ProgramData\docker\config\daemon.json"));
-    }
-    #[cfg(not(any(target_os = "linux", target_os = "windows")))]
-    {
-        crate::home_file(".docker/daemon.json")
+        Scope::System => {
+            #[cfg(target_os = "windows")]
+            {
+                Ok(PathBuf::from(r"C:\ProgramData\docker\config\daemon.json"))
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                Ok(PathBuf::from("/etc/docker/daemon.json"))
+            }
+        }
     }
 }
 

@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io;
+use std::io::{self, Write};
 use std::path::PathBuf;
 use std::process;
 use std::thread;
@@ -7,6 +7,22 @@ use std::thread;
 use clap::{Parser, Subcommand, ValueEnum};
 
 use lm::config::{Config, Scope};
+
+const STARTER_CONFIG: &str = r#"# lazy-mirror configuration
+
+[mirrors]
+# company = "https://packages.example.com/simple"
+
+[defaults]
+# pip = "company"
+# docker = "https://registry.example.com"
+
+[options]
+timeout_seconds = 10
+retries = 1
+cache_ttl_seconds = 300
+parallelism = 4
+"#;
 
 #[derive(Debug, Parser)]
 #[command(name = "lm", version, about = "Change package and software sources")]
@@ -64,15 +80,21 @@ enum Commands {
         format: OutputFormat,
         #[arg(long)]
         only_installed: bool,
+        #[arg(long, conflicts_with = "scope")]
+        all_scopes: bool,
     },
     #[command(about = "Set a source, mirror name, or URL", visible_alias = "s")]
     Set {
         target: Target,
         mirror: Option<String>,
+        #[arg(long, conflicts_with = "mirror")]
+        best: bool,
         #[arg(long, value_enum, default_value = "user")]
         scope: Scope,
         #[arg(long, visible_alias = "dry")]
         dry_run: bool,
+        #[arg(long)]
+        verify: bool,
         #[arg(long)]
         atomic: bool,
     },
@@ -88,6 +110,11 @@ enum Commands {
     Config {
         #[command(subcommand)]
         command: ConfigCommand,
+    },
+    #[command(about = "Generate shell completion script")]
+    Completions {
+        #[arg(value_enum)]
+        shell: CompletionShell,
     },
     #[command(about = "Check tools, configuration and selected mirror")]
     Doctor {
@@ -123,6 +150,8 @@ enum Commands {
 
 #[derive(Debug, Subcommand)]
 enum ConfigCommand {
+    #[command(about = "Create a starter TOML configuration")]
+    Init,
     #[command(about = "Validate the TOML configuration")]
     Validate,
     #[command(about = "Show effective configuration")]
@@ -137,6 +166,15 @@ enum ConfigCommand {
 enum OutputFormat {
     Table,
     Json,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum)]
+#[value(rename_all = "lower")]
+enum CompletionShell {
+    Bash,
+    Zsh,
+    Fish,
+    Powershell,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -385,6 +423,15 @@ struct ProbeOptions {
     parallelism: Option<usize>,
 }
 
+#[derive(Clone, Copy)]
+struct ExecuteOptions {
+    best: bool,
+    verify: bool,
+    scope: Scope,
+    dry_run: bool,
+    atomic: bool,
+}
+
 fn target_name(target: Target) -> &'static str {
     match target {
         Target::All => "all",
@@ -611,16 +658,16 @@ fn run_action(
         },
         Target::Rust => run_group(action, mirror, scope, &[Target::Cargo, Target::Rustup]),
         Target::Docker => match action {
-            Action::Set => lm::docker::set(mirror.unwrap()),
-            Action::Reset => lm::docker::unset(),
+            Action::Set => lm::docker::set(mirror.unwrap(), scope),
+            Action::Reset => lm::docker::unset(scope),
         },
         Target::Containerd | Target::Nerdctl => match action {
-            Action::Set => lm::container::containerd_set(mirror.unwrap()),
-            Action::Reset => lm::container::containerd_unset(),
+            Action::Set => lm::container::containerd_set(mirror.unwrap(), scope),
+            Action::Reset => lm::container::containerd_unset(scope),
         },
         Target::Podman => match action {
-            Action::Set => lm::container::podman_set(mirror.unwrap()),
-            Action::Reset => lm::container::podman_unset(),
+            Action::Set => lm::container::podman_set(mirror.unwrap(), scope),
+            Action::Reset => lm::container::podman_unset(scope),
         },
         Target::Conda | Target::Mamba => {
             let name = target_name(target);
@@ -822,24 +869,104 @@ fn run_dart_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Res
     }
 }
 
+fn select_mirror(
+    target: Target,
+    selector: Option<&str>,
+    best: bool,
+    config: &Config,
+    cache: Option<&mut lm::probe::HealthCache>,
+) -> io::Result<String> {
+    if !best {
+        return lm::catalog::resolve(catalog_name(target), selector, config);
+    }
+    let cache = cache.ok_or_else(|| io::Error::other("best mirror selection requires a cache"))?;
+    let mut candidates = measure_one(
+        target,
+        None,
+        config,
+        cache,
+        Some(config.settings().parallelism),
+    )?
+    .into_iter()
+    .collect::<Vec<_>>();
+    if config.default_for(catalog_name(target)).is_some() {
+        let url = lm::catalog::resolve(catalog_name(target), None, config)?;
+        if !candidates.iter().any(|record| record.url == url) {
+            candidates.extend(measure_one(
+                target,
+                Some(&url),
+                config,
+                cache,
+                Some(config.settings().parallelism),
+            )?);
+        }
+    }
+    fastest_mirror(candidates).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("no usable mirror found for {}", target_name(target)),
+        )
+    })
+}
+
+fn fastest_mirror(mut candidates: Vec<MeasureRecord>) -> Option<String> {
+    candidates.retain(probe_is_usable);
+    candidates.sort_by_key(|record| record.milliseconds.unwrap_or(u128::MAX));
+    candidates.into_iter().next().map(|record| record.url)
+}
+
+fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()> {
+    let result = lm::probe::probe_target(
+        catalog_name(target),
+        mirror,
+        config.settings().timeout_seconds,
+        config.settings().retries,
+    )?;
+    if state_is_usable(catalog_name(target), &result.state) {
+        Ok(())
+    } else {
+        Err(io::Error::other(format!(
+            "mirror verification failed for {}: {} ({})",
+            target_name(target),
+            result.state,
+            result.detail
+        )))
+    }
+}
+
 fn execute(
     target: Target,
     action: Action,
     selector: Option<&str>,
-    scope: Scope,
-    dry_run: bool,
+    options: ExecuteOptions,
     config: &Config,
 ) -> io::Result<()> {
-    validate_scope(target, scope)?;
+    validate_scope(target, options.scope)?;
+    let mut cache = options
+        .best
+        .then(|| lm::probe::HealthCache::load(config.settings().cache_ttl_seconds))
+        .transpose()?;
     let mirror = match action {
-        Action::Set => Some(lm::catalog::resolve(
-            catalog_name(target),
-            selector,
-            config,
-        )?),
+        Action::Set => {
+            let mirror = select_mirror(target, selector, options.best, config, cache.as_mut())?;
+            if options.verify {
+                verify_mirror(target, &mirror, config)?;
+            }
+            Some(mirror)
+        }
         Action::Reset => None,
     };
-    execute_resolved(target, action, mirror.as_deref(), scope, dry_run)
+    let result = execute_resolved(
+        target,
+        action,
+        mirror.as_deref(),
+        options.scope,
+        options.dry_run,
+    );
+    if let Some(cache) = cache {
+        cache.save()?;
+    }
+    result
 }
 
 fn execute_resolved(
@@ -868,7 +995,15 @@ fn execute_resolved(
         Action::Set => "set",
         Action::Reset => "reset",
     };
-    println!("{verb} {} mirror", target_name(target));
+    if action == Action::Set {
+        println!(
+            "{verb} {} mirror to {}",
+            target_name(target),
+            redact_url(mirror.unwrap_or_default())
+        );
+    } else {
+        println!("{verb} {} mirror", target_name(target));
+    }
     Ok(())
 }
 
@@ -912,6 +1047,9 @@ fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
                 | Target::Flutter
                 | Target::Huggingface
                 | Target::Docker
+                | Target::Containerd
+                | Target::Nerdctl
+                | Target::Podman
                 | Target::Apt
                 | Target::Apk
                 | Target::Brew
@@ -993,27 +1131,35 @@ fn is_system_os(target: Target) -> bool {
 fn execute_all(
     action: Action,
     selector: Option<&str>,
-    scope: Scope,
-    dry_run: bool,
-    atomic: bool,
+    options: ExecuteOptions,
     config: &Config,
 ) -> io::Result<()> {
-    if atomic && action != Action::Set {
+    if options.atomic && action != Action::Set {
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             "--atomic is supported only for set all",
         ));
     }
+    let mut cache = options
+        .best
+        .then(|| lm::probe::HealthCache::load(config.settings().cache_ttl_seconds))
+        .transpose()?;
     let mut plan = Vec::new();
     for &target in ALL_TARGETS {
+        if matches!(action, Action::Set | Action::Reset)
+            && ((target == Target::Flutter && config.enabled("dart"))
+                || (matches!(target, Target::Cabal | Target::Stack) && config.enabled("haskell")))
+        {
+            continue;
+        }
         if !config.enabled(catalog_name(target)) {
             continue;
         }
-        if let Err(error) = validate_scope(target, scope) {
+        if let Err(error) = validate_scope(target, options.scope) {
             eprintln!("{}: skipped; {error}", target_name(target));
             continue;
         }
-        if atomic && !atomic_supported(target) {
+        if options.atomic && !atomic_supported(target) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
@@ -1022,7 +1168,7 @@ fn execute_all(
                 ),
             ));
         }
-        if atomic && !is_installed(target) {
+        if options.atomic && !is_installed(target) {
             return Err(io::Error::new(
                 io::ErrorKind::NotFound,
                 format!(
@@ -1032,24 +1178,32 @@ fn execute_all(
             ));
         }
         let mirror = match action {
-            Action::Set => match lm::catalog::resolve(catalog_name(target), selector, config) {
-                Ok(mirror) => Some(mirror),
-                Err(_error)
-                    if selector.is_none()
-                        && lm::catalog::builtin_mirrors(catalog_name(target))?.is_empty() =>
-                {
-                    eprintln!(
-                        "{}: skipped; configure a default or pass a URL",
-                        target_name(target)
-                    );
-                    continue;
+            Action::Set => {
+                match select_mirror(target, selector, options.best, config, cache.as_mut()) {
+                    Ok(mirror) => {
+                        if options.verify {
+                            verify_mirror(target, &mirror, config)?;
+                        }
+                        Some(mirror)
+                    }
+                    Err(_error)
+                        if selector.is_none()
+                            && lm::catalog::builtin_mirrors(catalog_name(target))?.is_empty()
+                            && config.default_for(catalog_name(target)).is_none() =>
+                    {
+                        eprintln!(
+                            "{}: skipped; configure a default or pass a URL",
+                            target_name(target)
+                        );
+                        continue;
+                    }
+                    Err(error) => return Err(error),
                 }
-                Err(error) => return Err(error),
-            },
+            }
             Action::Reset => None,
         };
-        let previous = if atomic {
-            let status = inspect(target, config, scope)?;
+        let previous = if options.atomic {
+            let status = inspect(target, config, options.scope)?;
             if status.configured && status.source.is_none() {
                 return Err(io::Error::new(
                     io::ErrorKind::InvalidData,
@@ -1067,15 +1221,21 @@ fn execute_all(
     }
     let mut applied: Vec<(Target, Option<String>)> = Vec::new();
     for (target, mirror, previous) in plan {
-        if let Err(error) = execute_resolved(target, action, mirror.as_deref(), scope, dry_run) {
-            if atomic && !dry_run {
+        if let Err(error) = execute_resolved(
+            target,
+            action,
+            mirror.as_deref(),
+            options.scope,
+            options.dry_run,
+        ) {
+            if options.atomic && !options.dry_run {
                 let mut rollback_error = None;
                 for (applied_target, previous) in applied.into_iter().rev() {
                     let result = match previous {
                         Some(source) => {
-                            run_action(applied_target, Action::Set, Some(&source), scope)
+                            run_action(applied_target, Action::Set, Some(&source), options.scope)
                         }
-                        None => run_action(applied_target, Action::Reset, None, scope),
+                        None => run_action(applied_target, Action::Reset, None, options.scope),
                     };
                     if let Err(rollback) = result {
                         rollback_error = Some(format!(
@@ -1091,9 +1251,12 @@ fn execute_all(
             }
             return Err(error);
         }
-        if atomic && !dry_run {
+        if options.atomic && !options.dry_run {
             applied.push((target, previous));
         }
+    }
+    if let Some(cache) = cache {
+        cache.save()?;
     }
     Ok(())
 }
@@ -1195,11 +1358,11 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
         Target::Gradle => lm::java::gradle_status(&expected),
         Target::Sbt => lm::sbt::status(&expected),
         Target::Cargo | Target::Rust => lm::rust::status(&expected, scope),
-        Target::Docker => lm::docker::status(),
+        Target::Docker => lm::docker::status(scope),
         Target::Containerd | Target::Nerdctl => {
-            lm::container::containerd_status(target_name(target))
+            lm::container::containerd_status(target_name(target), scope)
         }
-        Target::Podman => lm::container::podman_status(),
+        Target::Podman => lm::container::podman_status(scope),
         Target::Conda | Target::Mamba => lm::conda::status(target_name(target), &expected),
         Target::Dart => lm::dart::dart_status(&expected, scope),
         Target::Flutter => lm::dart::flutter_status(&expected, scope),
@@ -1272,7 +1435,7 @@ fn status_record(target: Target, config: &Config, scope: Scope) -> StatusRecord 
             scope: format!("{scope:?}").to_lowercase(),
             configured: status.configured,
             version: Some(status.version),
-            source: status.source.map(|source| redact_url(&source)),
+            source: status.source.map(|source| redact_text(&source)),
             path: status.path.map(|path| path.display().to_string()),
             origin: format!("{scope:?}").to_lowercase(),
             detail: Some(redact_text(&status.detail)),
@@ -1298,20 +1461,27 @@ fn get(
     scope: Scope,
     format: OutputFormat,
     only_installed: bool,
+    all_scopes: bool,
 ) -> io::Result<()> {
     let targets: &[Target] = if target == Target::All {
         ALL_TARGETS
     } else {
         std::slice::from_ref(&target)
     };
-    let records: Vec<_> = targets
-        .iter()
-        .copied()
-        .filter(|target| config.enabled(catalog_name(*target)))
-        .filter(|target| validate_scope(*target, scope).is_ok())
-        .filter(|target| !only_installed || is_installed(*target))
-        .map(|target| status_record(target, config, scope))
-        .collect();
+    let mut records = Vec::new();
+    for target in targets.iter().copied() {
+        if !config.enabled(catalog_name(target)) || (only_installed && !is_installed(target)) {
+            continue;
+        }
+        for current_scope in [Scope::Project, Scope::User, Scope::System] {
+            if !all_scopes && current_scope != scope {
+                continue;
+            }
+            if validate_scope(target, current_scope).is_ok() {
+                records.push(status_record(target, config, current_scope));
+            }
+        }
+    }
     if format == OutputFormat::Json {
         print_json(&serde_json::Value::Array(
             records.iter().map(status_json).collect(),
@@ -1335,11 +1505,15 @@ fn get(
             }
         }
     }
-    if !records.is_empty()
-        && records
-            .iter()
-            .all(|record| record.configured && record.error.is_none())
-    {
+    let ok = if all_scopes {
+        !records.is_empty() && records.iter().all(|record| record.error.is_none())
+    } else {
+        !records.is_empty()
+            && records
+                .iter()
+                .all(|record| record.configured && record.error.is_none())
+    };
+    if ok {
         Ok(())
     } else {
         Err(io::Error::other(
@@ -1380,7 +1554,9 @@ fn plan(
             Ok(desired) => (desired, current.error.clone()),
             Err(error) => (None, Some(error.to_string())),
         };
+        let diff = source_diff(current.source.as_deref(), desired.as_deref());
         records.push(serde_json::json!({
+            "schema": lm::JSON_SCHEMA,
             "target": target_name(target),
             "scope": scope_name(scope),
             "action": if reset { "reset" } else { "set" },
@@ -1388,6 +1564,7 @@ fn plan(
             "desired": desired.as_deref().map(redact_url),
             "path": current.path,
             "strategy": if current.path.is_some() { "file" } else { "command" },
+            "diff": diff,
             "installed": is_installed(target),
             "error": error,
         }));
@@ -1397,12 +1574,13 @@ fn plan(
     } else {
         for record in &records {
             println!(
-                "{}\t{}\t{}\t{}\t{}",
+                "{}\t{}\t{}\t{}\t{}\n{}",
                 record["target"].as_str().unwrap_or_default(),
                 record["action"].as_str().unwrap_or_default(),
                 record["desired"].as_str().unwrap_or("upstream"),
                 record["path"].as_str().unwrap_or("external command"),
-                record["error"].as_str().unwrap_or("ready")
+                record["error"].as_str().unwrap_or("ready"),
+                record["diff"].as_str().unwrap_or_default()
             );
         }
     }
@@ -1414,6 +1592,19 @@ fn plan(
     } else {
         Ok(())
     }
+}
+
+fn source_diff(current: Option<&str>, desired: Option<&str>) -> String {
+    let current = current
+        .map(redact_text)
+        .unwrap_or_else(|| "upstream".to_owned());
+    let desired = desired
+        .map(redact_url)
+        .unwrap_or_else(|| "upstream".to_owned());
+    if current == desired {
+        return "no changes".to_owned();
+    }
+    format!("--- current\n+++ desired\n@@\n- {current}\n+ {desired}")
 }
 
 fn doctor(
@@ -1457,6 +1648,7 @@ fn doctor(
             .clone()
             .or_else(|| desired.as_ref().err().map(std::string::ToString::to_string));
         records.push(serde_json::json!({
+            "schema": lm::JSON_SCHEMA,
             "target": target_name(target),
             "installed": is_installed(target),
             "configured": status.configured,
@@ -1465,6 +1657,7 @@ fn doctor(
             "health": health.as_ref().map(|record| record.state.clone()),
             "code": health.as_ref().and_then(|record| record.code.clone()),
             "latency_ms": health.as_ref().and_then(|record| record.milliseconds),
+            "health_usable": health.as_ref().is_some_and(probe_is_usable),
             "error": error,
         }));
     }
@@ -1490,10 +1683,7 @@ fn doctor(
         && records.iter().all(|record| {
             record["configured"].as_bool() == Some(true)
                 && record["error"].is_null()
-                && matches!(
-                    record["health"].as_str(),
-                    Some("healthy") | Some("auth-required")
-                )
+                && record["health_usable"].as_bool() == Some(true)
         })
     {
         Ok(())
@@ -1583,6 +1773,7 @@ fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
             mirrors.insert(name.to_owned(), (url.to_owned(), "config"));
         }
         serde_json::json!({
+            "schema": lm::JSON_SCHEMA,
             "config": config.path,
             "mirrors": mirrors.into_iter().map(|(name, (url, origin))| serde_json::json!({"name": name, "url": redact_url(&url), "origin": origin})).collect::<Vec<_>>()
         })
@@ -1596,6 +1787,7 @@ fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
             )
         })?;
         serde_json::json!({
+            "schema": lm::JSON_SCHEMA,
             "config": config.path,
             "target": spec.name,
             "aliases": spec.aliases,
@@ -1605,6 +1797,7 @@ fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
     } else {
         let category = query.unwrap_or("target");
         serde_json::json!({
+            "schema": lm::JSON_SCHEMA,
             "config": config.path,
             "targets": lm::catalog::targets().iter().filter(|target| category == "target" || target_category(target.name) == category).map(|target| serde_json::json!({"name": target.name, "category": target_category(target.name), "aliases": target.aliases, "mirrors": target.mirrors.len(), "enabled": config.enabled(target.name)})).collect::<Vec<_>>()
         })
@@ -1817,9 +2010,12 @@ fn measure(
 }
 
 fn probe_is_usable(record: &MeasureRecord) -> bool {
-    record.state == "healthy"
-        || (record.state == "auth-required"
-            && matches!(record.target.as_str(), "docker" | "containerd" | "podman"))
+    state_is_usable(&record.target, &record.state)
+}
+
+fn state_is_usable(target: &str, state: &str) -> bool {
+    state == "healthy"
+        || (state == "auth-required" && matches!(target, "docker" | "containerd" | "podman"))
 }
 
 fn measure_one(
@@ -1836,29 +2032,32 @@ fn measure_one(
             selector.to_owned(),
             lm::catalog::resolve(name, Some(selector), config)?,
         )]
-    } else if specs.is_empty() {
-        match lm::catalog::resolve(name, None, config) {
-            Ok(url) => vec![("configured".to_owned(), url)],
-            Err(error) => {
-                return Ok(vec![MeasureRecord {
-                    target: name.to_owned(),
-                    mirror: "configured".to_owned(),
-                    url: String::new(),
-                    probe_url: None,
-                    code: None,
-                    state: "unavailable".to_owned(),
-                    detail: None,
-                    milliseconds: None,
-                    cached: false,
-                    error: Some(error.to_string()),
-                }])
-            }
-        }
     } else {
-        specs
+        let mut candidates = specs
             .iter()
             .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
-            .collect()
+            .collect::<Vec<_>>();
+        if config.default_for(name).is_some() {
+            let url = lm::catalog::resolve(name, None, config)?;
+            if !candidates.iter().any(|(_, candidate)| candidate == &url) {
+                candidates.push(("configured".to_owned(), url));
+            }
+        }
+        if candidates.is_empty() {
+            return Ok(vec![MeasureRecord {
+                target: name.to_owned(),
+                mirror: "configured".to_owned(),
+                url: String::new(),
+                probe_url: None,
+                code: None,
+                state: "unavailable".to_owned(),
+                detail: None,
+                milliseconds: None,
+                cached: false,
+                error: Some(format!("{name} requires a mirror name or URL")),
+            }]);
+        }
+        candidates
     };
     let mut settings = config.settings();
     if let Some(parallelism) = parallelism {
@@ -1975,6 +2174,7 @@ fn redact_text(value: &str) -> String {
 
 fn status_json(record: &StatusRecord) -> serde_json::Value {
     serde_json::json!({
+        "schema": lm::JSON_SCHEMA,
         "target": record.target.clone(),
         "scope": record.scope.clone(),
         "configured": record.configured,
@@ -1989,6 +2189,7 @@ fn status_json(record: &StatusRecord) -> serde_json::Value {
 
 fn measure_json(record: &MeasureRecord) -> serde_json::Value {
     serde_json::json!({
+        "schema": lm::JSON_SCHEMA,
         "target": record.target.clone(),
         "mirror": record.mirror.clone(),
         "url": redact_url(&record.url),
@@ -2011,6 +2212,28 @@ fn print_json(value: &serde_json::Value) -> io::Result<()> {
 
 fn config_command(config: &Config, command: ConfigCommand) -> io::Result<()> {
     match command {
+        ConfigCommand::Init => {
+            if config.path.exists() {
+                return Err(io::Error::new(
+                    io::ErrorKind::AlreadyExists,
+                    format!("configuration already exists: {}", config.path.display()),
+                ));
+            }
+            if let Some(parent) = config
+                .path
+                .parent()
+                .filter(|parent| !parent.as_os_str().is_empty())
+            {
+                std::fs::create_dir_all(parent)?;
+            }
+            let mut file = std::fs::OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&config.path)?;
+            file.write_all(STARTER_CONFIG.as_bytes())?;
+            println!("created\t{}", config.path.display());
+            Ok(())
+        }
         ConfigCommand::Validate => {
             println!("valid\t{}", config.path.display());
             Ok(())
@@ -2045,6 +2268,70 @@ fn config_command(config: &Config, command: ConfigCommand) -> io::Result<()> {
             }
         }
     }
+}
+
+fn completions(shell: CompletionShell) -> io::Result<()> {
+    let mut words = BTreeSet::from([
+        "list",
+        "measure",
+        "check",
+        "get",
+        "set",
+        "reset",
+        "config",
+        "doctor",
+        "plan",
+        "diff",
+        "completions",
+        "--help",
+        "--version",
+        "--format",
+        "--scope",
+        "--dry-run",
+        "--verify",
+        "--best",
+        "--atomic",
+        "--only-installed",
+        "--no-cache",
+        "--parallelism",
+    ]);
+    for target in lm::catalog::targets() {
+        words.insert(target.name);
+        words.extend(target.aliases.iter().copied());
+    }
+    let words = words.into_iter().collect::<Vec<_>>().join(" ");
+    let script = match shell {
+        CompletionShell::Bash => format!(
+            r#"_lm_completions() {{
+  local current="${{COMP_WORDS[COMP_CWORD]}}"
+  COMPREPLY=( $(compgen -W "{words}" -- "$current") )
+}}
+complete -F _lm_completions lm
+"#
+        ),
+        CompletionShell::Zsh => format!(
+            r#"#compdef lm
+_lm_completions() {{
+  _arguments '*:argument:({words})'
+}}
+_lm_completions "$@"
+"#
+        ),
+        CompletionShell::Fish => {
+            format!("complete -c lm -f -a '{}'", words)
+        }
+        CompletionShell::Powershell => format!(
+            r#"Register-ArgumentCompleter -Native -CommandName lm -ScriptBlock {{
+  param($wordToComplete)
+  '{words}'.Split(' ') |
+    Where-Object {{ $_ -like "$wordToComplete*" }} |
+    ForEach-Object {{ [System.Management.Automation.CompletionResult]::new($_, $_, 'ParameterValue', $_) }}
+}}
+"#
+        ),
+    };
+    print!("{script}");
+    Ok(())
 }
 
 fn run() -> io::Result<()> {
@@ -2086,21 +2373,28 @@ fn run() -> io::Result<()> {
             scope,
             format,
             only_installed,
-        } => get(target, &config, scope, format, only_installed),
+            all_scopes,
+        } => get(target, &config, scope, format, only_installed, all_scopes),
         Commands::Set {
             target,
             mirror,
+            best,
             scope,
             dry_run,
+            verify,
             atomic,
         } => {
             if target == Target::All {
                 execute_all(
                     Action::Set,
                     mirror.as_deref(),
-                    scope,
-                    dry_run,
-                    atomic,
+                    ExecuteOptions {
+                        best,
+                        verify,
+                        scope,
+                        dry_run,
+                        atomic,
+                    },
                     &config,
                 )
             } else {
@@ -2114,8 +2408,13 @@ fn run() -> io::Result<()> {
                     target,
                     Action::Set,
                     mirror.as_deref(),
-                    scope,
-                    dry_run,
+                    ExecuteOptions {
+                        best,
+                        verify,
+                        scope,
+                        dry_run,
+                        atomic: false,
+                    },
                     &config,
                 )
             }
@@ -2126,12 +2425,36 @@ fn run() -> io::Result<()> {
             dry_run,
         } => {
             if target == Target::All {
-                execute_all(Action::Reset, None, scope, dry_run, false, &config)
+                execute_all(
+                    Action::Reset,
+                    None,
+                    ExecuteOptions {
+                        best: false,
+                        verify: false,
+                        scope,
+                        dry_run,
+                        atomic: false,
+                    },
+                    &config,
+                )
             } else {
-                execute(target, Action::Reset, None, scope, dry_run, &config)
+                execute(
+                    target,
+                    Action::Reset,
+                    None,
+                    ExecuteOptions {
+                        best: false,
+                        verify: false,
+                        scope,
+                        dry_run,
+                        atomic: false,
+                    },
+                    &config,
+                )
             }
         }
         Commands::Config { command } => config_command(&config, command),
+        Commands::Completions { shell } => completions(shell),
         Commands::Doctor {
             target,
             mirror,
@@ -2195,6 +2518,10 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "list", "apt", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "rustup", "rsproxy"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "pip", "--best", "--verify"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "get", "pip", "--all-scopes"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "config", "init"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "completions", "bash"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "huggingface", "--scope", "project"]).is_ok());
     }
 
@@ -2221,5 +2548,27 @@ mod tests {
             error: None,
         };
         assert!(probe_is_usable(&record));
+    }
+
+    #[test]
+    fn fastest_mirror_ignores_unusable_sources() {
+        let record = |url: &str, state: &str, milliseconds| MeasureRecord {
+            target: "pip".to_owned(),
+            mirror: url.to_owned(),
+            url: url.to_owned(),
+            probe_url: None,
+            code: None,
+            state: state.to_owned(),
+            detail: None,
+            milliseconds: Some(milliseconds),
+            cached: false,
+            error: None,
+        };
+        let selected = fastest_mirror(vec![
+            record("https://slow.example", "healthy", 80),
+            record("https://fast.example", "healthy", 20),
+            record("https://broken.example", "unavailable", 1),
+        ]);
+        assert_eq!(selected.as_deref(), Some("https://fast.example"));
     }
 }

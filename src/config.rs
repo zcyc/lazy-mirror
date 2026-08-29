@@ -73,9 +73,28 @@ impl Config {
                 ));
             }
         }
-        let defaults = string_table(&document, "defaults")?;
-        let targets = target_table(&document)?;
-        let mut defaults = defaults;
+        let raw_defaults = string_table(&document, "defaults")?;
+        let raw_targets = target_table(&document)?;
+        let mut defaults = BTreeMap::new();
+        for (name, value) in raw_defaults {
+            let canonical = canonical_target(&name)?;
+            if defaults.insert(canonical.clone(), value).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("duplicate configuration for target {canonical}"),
+                ));
+            }
+        }
+        let mut targets = BTreeMap::new();
+        for (name, target) in raw_targets {
+            let canonical = canonical_target(&name)?;
+            if targets.insert(canonical.clone(), target).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("duplicate configuration for target {canonical}"),
+                ));
+            }
+        }
         for (name, target) in &targets {
             if let Some(value) = &target.default {
                 defaults
@@ -92,6 +111,7 @@ impl Config {
                 ));
             }
         }
+        validate_references(&defaults, &targets, &mirrors)?;
         Ok(Self {
             path,
             mirrors,
@@ -108,16 +128,27 @@ impl Config {
     pub fn default_for(&self, target: &str) -> Option<&str> {
         self.defaults
             .get(target)
+            .or_else(|| crate::catalog::find(target).and_then(|spec| self.defaults.get(spec.name)))
             .or_else(|| {
                 self.targets
                     .get(target)
                     .and_then(|target| target.default.as_ref())
             })
+            .or_else(|| {
+                crate::catalog::find(target).and_then(|spec| {
+                    self.targets
+                        .get(spec.name)
+                        .and_then(|target| target.default.as_ref())
+                })
+            })
             .map(String::as_str)
     }
 
     pub fn enabled(&self, target: &str) -> bool {
-        self.targets.get(target).is_none_or(|target| target.enabled)
+        self.targets
+            .get(target)
+            .or_else(|| crate::catalog::find(target).and_then(|spec| self.targets.get(spec.name)))
+            .is_none_or(|target| target.enabled)
     }
 
     pub fn settings(&self) -> Settings {
@@ -171,6 +202,7 @@ impl Config {
             .map(|(name, value)| (name.clone(), serde_json::Value::String(redact_url(value))))
             .collect::<serde_json::Map<_, _>>();
         serde_json::json!({
+            "schema": crate::JSON_SCHEMA,
             "config": self.path,
             "mirrors": mirrors,
             "defaults": defaults,
@@ -183,6 +215,51 @@ impl Config {
             }
         })
     }
+}
+
+fn canonical_target(name: &str) -> io::Result<String> {
+    crate::catalog::find(name)
+        .map(|spec| spec.name.to_owned())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown target {name} in TOML configuration"),
+            )
+        })
+}
+
+fn validate_references(
+    defaults: &BTreeMap<String, String>,
+    targets: &BTreeMap<String, TargetConfig>,
+    mirrors: &BTreeMap<String, String>,
+) -> io::Result<()> {
+    for target in targets.keys() {
+        if crate::catalog::find(target).is_none() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown target {target} in TOML configuration"),
+            ));
+        }
+    }
+    for (target, selection) in defaults {
+        let spec = crate::catalog::find(target).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown target {target} in TOML configuration"),
+            )
+        })?;
+        let valid = is_url(selection)
+            || mirrors.contains_key(selection)
+            || (selection == "first" && !spec.mirrors.is_empty())
+            || spec.mirrors.iter().any(|mirror| mirror.name == selection);
+        if !valid {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("unknown mirror {selection} for target {target}"),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetConfig>> {
@@ -317,7 +394,13 @@ fn integer(value: &toml::Value, name: &str) -> io::Result<u64> {
 }
 
 pub(crate) fn is_url(value: &str) -> bool {
+    let authority = value
+        .split_once("://")
+        .map(|(_, rest)| rest.split(['/', '?', '#']).next().unwrap_or_default())
+        .unwrap_or_default();
     (value.starts_with("http://") || value.starts_with("https://"))
+        && !authority.is_empty()
+        && !authority.contains('@')
         && !value.chars().any(|character| {
             character.is_control()
                 || character.is_whitespace()
@@ -337,12 +420,11 @@ fn redact_url(value: &str) -> String {
     let authority = authority
         .rsplit_once('@')
         .map_or(authority, |(_, host)| host);
-    format!(
-        "{}://{}{}",
-        &value[..scheme],
-        authority,
-        &value[authority_end..]
-    )
+    let suffix = &value[authority_end..];
+    let suffix = suffix
+        .find(['?', '#'])
+        .map_or(suffix, |offset| &suffix[..offset]);
+    format!("{}://{}{}", &value[..scheme], authority, suffix)
 }
 
 fn string_table(document: &toml::Table, name: &str) -> io::Result<BTreeMap<String, String>> {
@@ -473,6 +555,43 @@ mod tests {
         )
         .unwrap();
         assert!(Config::load(Some(&path)).is_err());
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn rejects_unknown_config_references() {
+        let path = env::temp_dir().join(format!(
+            "lm-config-invalid-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(&path, "[defaults]\npip = \"missing\"\n").unwrap();
+        let error = Config::load(Some(&path)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn aliases_share_canonical_target_settings() {
+        let path = env::temp_dir().join(format!(
+            "lm-config-alias-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "[mirrors]\ncorp = \"https://mirror.example/simple\"\n[targets.py]\ndefault = \"corp\"\nenabled = false\n",
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(config.default_for("pip"), Some("corp"));
+        assert!(!config.enabled("pip"));
         fs::remove_file(path).unwrap();
     }
 }

@@ -464,20 +464,29 @@ fn config_path(name: &str, scope: Scope) -> io::Result<PathBuf> {
 
 fn os_path(name: &str) -> io::Result<PathBuf> {
     if let Some(path) = std::env::var_os("LM_OS_SOURCES_FILE") {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LM_OS_SOURCES_FILE cannot be empty",
+            ));
+        }
         return Ok(path.into());
     }
     if name == "termux" {
-        return Ok(std::env::var_os("PREFIX")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("$PREFIX"))
-            .join("etc/apt/sources.list"));
+        let prefix = std::env::var_os("PREFIX").ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                "PREFIX is required to configure Termux repositories",
+            )
+        })?;
+        return Ok(PathBuf::from(prefix).join("etc/apt/sources.list"));
     }
     let path = match name {
         "fedora" | "rocky" | "alma" | "openeuler" | "openanolis" => {
             "/etc/yum.repos.d/lazy-mirror.repo"
         }
         "opensuse" => "/etc/zypp/repos.d/lazy-mirror.repo",
-        "arch" | "archlinuxcn" | "manjaro" | "msys2" => "/etc/pacman.d/mirrorlist",
+        "arch" | "archlinuxcn" | "manjaro" => "/etc/pacman.d/mirrorlist",
         "gentoo" => "/etc/portage/make.conf",
         "voidlinux" => "/etc/xbps.d/00-lazy-mirror.conf",
         "solus" => "/etc/solus/repo.conf",
@@ -488,6 +497,9 @@ fn os_path(name: &str) -> io::Result<PathBuf> {
         "netbsd" => "/etc/pkgin/repositories.conf",
         _ => "/etc/apt/sources.list.d/lazy-mirror.list",
     };
+    if name == "msys2" {
+        return msys2_path();
+    }
     Ok(PathBuf::from(path))
 }
 
@@ -498,9 +510,10 @@ fn os_content(name: &str, mirror: &str) -> String {
             format!("{prefix}[lazy-mirror]\nname=lazy-mirror\nbaseurl={mirror}\nenabled=1\ngpgcheck=1\n")
         }
         "opensuse" => format!("{prefix}[lazy-mirror]\ntype=rpm-md\nbaseurl={mirror}\nenabled=1\n"),
-        "arch" | "archlinuxcn" | "manjaro" | "msys2" => {
+        "arch" | "archlinuxcn" | "manjaro" => {
             format!("{prefix}Server = {mirror}/$repo/os/$arch\n")
         }
+        "msys2" => format!("{prefix}Server = {mirror}/$repo/$arch\n"),
         "voidlinux" => format!("{prefix}repository={mirror}/current/$XBPS_ARCH\n"),
         "solus" => format!("{prefix}SolusURL = {mirror}\n"),
         "openwrt" => format!("{prefix}src/gz lazy-mirror {mirror}\n"),
@@ -522,6 +535,33 @@ fn os_content(name: &str, mirror: &str) -> String {
             format!("{prefix}deb {mirror} {distribution} {components}\n")
         }
     }
+}
+
+fn msys2_path() -> io::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("LM_MSYS2_MIRRORLIST") {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "LM_MSYS2_MIRRORLIST cannot be empty",
+            ));
+        }
+        return Ok(path.into());
+    }
+    let environment = std::env::var("MSYSTEM").unwrap_or_else(|_| "MSYS".to_owned());
+    let specific = match environment.as_str() {
+        "MSYS" => "mirrorlist.msys",
+        "MINGW32" => "mirrorlist.mingw32",
+        "MINGW64" => "mirrorlist.mingw64",
+        "UCRT64" => "mirrorlist.ucrt64",
+        "CLANG64" => "mirrorlist.clang64",
+        "CLANGARM64" => "mirrorlist.clangarm64",
+        _ => "mirrorlist.msys",
+    };
+    let specific = PathBuf::from("/etc/pacman.d").join(specific);
+    if specific.exists() || environment == "MSYS" {
+        return Ok(specific);
+    }
+    Ok(PathBuf::from("/etc/pacman.d/mirrorlist.mingw"))
 }
 
 fn validate_os_scope(name: &str, scope: Scope) -> io::Result<()> {
@@ -816,7 +856,7 @@ fn apk_path() -> io::Result<PathBuf> {
         .unwrap_or_else(|| PathBuf::from("/etc/apk/repositories")))
 }
 
-fn apt_distribution() -> String {
+pub(crate) fn apt_distribution() -> String {
     if let Ok(distribution) = std::env::var("LM_APT_DISTRIBUTION") {
         return distribution;
     }
@@ -830,4 +870,17 @@ fn apt_distribution() -> String {
             })
         })
         .unwrap_or_else(|| "stable".to_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::os_content;
+
+    #[test]
+    fn msys2_uses_pacman_repository_layout() {
+        assert_eq!(
+            os_content("msys2", "https://mirror.example"),
+            "# managed by lazy-mirror:msys2\nServer = https://mirror.example/$repo/$arch\n"
+        );
+    }
 }

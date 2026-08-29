@@ -57,13 +57,16 @@ impl HealthCache {
     }
 
     pub fn get(&self, target: &str, url: &str) -> Option<ProbeResult> {
+        if !cacheable_url(url) {
+            return None;
+        }
         let entry = self.entries.get(&cache_key(target, url))?;
         let now = unix_seconds();
         (now.saturating_sub(entry.checked_at) <= self.ttl_seconds).then(|| entry.result.clone())
     }
 
     pub fn put(&mut self, target: &str, url: &str, result: ProbeResult) {
-        if self.path.is_some() {
+        if self.path.is_some() && cacheable_url(url) {
             self.entries.insert(
                 cache_key(target, url),
                 CacheEntry {
@@ -272,7 +275,7 @@ fn target_url(target: &str, url: &str) -> String {
             "/dists/{}/Release",
             std::env::var("LM_ROS_DISTRIBUTION")
                 .or_else(|_| std::env::var("ROS_DISTRO"))
-                .unwrap_or_else(|_| "stable".to_owned())
+                .unwrap_or_else(|_| crate::platform::apt_distribution())
         ),
         "huggingface" => "/api/models?limit=1".to_owned(),
         "nuget" => "/v3/index.json".to_owned(),
@@ -284,15 +287,33 @@ fn target_url(target: &str, url: &str) -> String {
         "flathub" => "/summary".to_owned(),
         _ => String::new(),
     };
-    if suffix.is_empty() || url.ends_with(suffix.trim_end_matches('/')) {
-        url.to_owned()
+    let query_start = url.find(['?', '#']).unwrap_or(url.len());
+    let (base, query) = url.split_at(query_start);
+    let base = base.trim_end_matches('/');
+    let suffix_query_start = suffix.find(['?', '#']).unwrap_or(suffix.len());
+    let (suffix_path, suffix_query) = suffix.split_at(suffix_query_start);
+    let path = if suffix_path.is_empty() || base.ends_with(suffix_path.trim_end_matches('/')) {
+        base.to_owned()
     } else {
-        format!("{url}{suffix}")
-    }
+        format!("{base}{suffix_path}")
+    };
+    let query = match (suffix_query, query) {
+        ("", query) => query.to_owned(),
+        (suffix_query, "") => suffix_query.to_owned(),
+        (suffix_query, query) if suffix_query.starts_with('?') && query.starts_with('?') => {
+            format!("{suffix_query}&{}", &query[1..])
+        }
+        (suffix_query, query) => format!("{suffix_query}{query}"),
+    };
+    format!("{path}{query}")
 }
 
 fn cache_key(target: &str, url: &str) -> String {
     format!("{target}\n{url}")
+}
+
+fn cacheable_url(url: &str) -> bool {
+    !url.contains(['?', '#'])
 }
 
 fn parse_cache(content: &str) -> BTreeMap<String, CacheEntry> {
@@ -348,6 +369,14 @@ mod tests {
             target_url("huggingface", "https://hf.example"),
             "https://hf.example/api/models?limit=1"
         );
+        assert_eq!(
+            target_url("pip", "https://pypi.example/simple?token=secret"),
+            "https://pypi.example/simple?token=secret"
+        );
+        assert_eq!(
+            target_url("huggingface", "https://hf.example?token=secret"),
+            "https://hf.example/api/models?limit=1&token=secret"
+        );
     }
 
     #[test]
@@ -356,5 +385,17 @@ mod tests {
         assert_eq!(classify("401"), "auth-required");
         assert_eq!(classify("429"), "rate-limited");
         assert_eq!(classify("404"), "unsupported");
+    }
+
+    #[test]
+    fn curl_auth_values_are_escaped_for_stdin_config() {
+        let value = curl_config_value("user\"\\\n");
+        assert_eq!(value, "\"user\\\"\\\\\\n\"");
+    }
+
+    #[test]
+    fn query_urls_are_not_written_to_health_cache() {
+        assert!(!cacheable_url("https://mirror.example/simple?token=secret"));
+        assert!(cacheable_url("https://mirror.example/simple"));
     }
 }

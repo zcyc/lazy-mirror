@@ -28,6 +28,8 @@ pub mod rust;
 pub mod sbt;
 pub mod uv;
 
+pub const JSON_SCHEMA: &str = "lm/v1";
+
 pub(crate) fn run(program: &str, args: &[&str]) -> io::Result<()> {
     let status = Command::new(program).args(args).status()?;
     if status.success() {
@@ -299,22 +301,6 @@ where
     Ok(())
 }
 
-pub(crate) fn remove_owned_if<F>(path: &Path, managed: F) -> io::Result<()>
-where
-    F: Fn(&str) -> bool,
-{
-    let _lock = lock(path)?;
-    match fs::read_to_string(path) {
-        Ok(existing) if managed(&existing) => fs::remove_file(path),
-        Ok(_) => Err(io::Error::new(
-            io::ErrorKind::AlreadyExists,
-            format!("refusing to remove unmanaged file {}", path.display()),
-        )),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
-}
-
 pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -> io::Result<()> {
     update_named_block(path, name, "#", block)
 }
@@ -411,7 +397,14 @@ where
                 path.display()
             ),
         )),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(()),
+        Err(error) if error.kind() == io::ErrorKind::NotFound => {
+            if backup.exists() {
+                restore_file(&backup, path)?;
+                fs::remove_file(backup)?;
+            }
+            let _ = fs::remove_file(marker);
+            Ok(())
+        }
         Err(error) => Err(error),
     }
 }
@@ -519,6 +512,12 @@ where
 {
     let _lock = lock(path)?;
     let Some(content) = read_optional(path)? else {
+        let backup = backup_path(path);
+        if backup.exists() {
+            restore_file(&backup, path)?;
+            fs::remove_file(backup)?;
+        }
+        let _ = fs::remove_file(created_marker_path(path));
         return Ok(());
     };
     let document = content.parse::<toml::Table>().map_err(|error| {
@@ -640,6 +639,22 @@ mod tests {
         })
         .unwrap();
         remove_with_backup_if(&path, |content| content == "mirror two").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "user config");
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn missing_managed_file_restores_its_backup() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let path = std::env::temp_dir().join(format!("lm-missing-{suffix}"));
+
+        fs::write(&path, "user config").unwrap();
+        write_with_backup_if(&path, "mirror config", |content| content == "mirror config").unwrap();
+        fs::remove_file(&path).unwrap();
+        remove_with_backup_if(&path, |content| content == "mirror config").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "user config");
         fs::remove_file(path).unwrap();
     }

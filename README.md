@@ -19,11 +19,15 @@ lm check docker --format json  # 按 Docker Registry API 路径校验
 lm get go                      # 查看当前配置、实际 source 和作用域
 lm get all --format json
 lm get all --only-installed
+lm get pip --all-scopes       # 查看各作用域的配置
 lm doctor all --only-installed  # 检查工具、配置和 mirror
 lm plan docker daocloud         # 显示将要修改的路径和目标值
 lm diff docker daocloud --format json
+lm set pip --best --verify     # 选择最快可用源并在写入前复核
 lm config validate
 lm config show --format json
+lm config init                 # 创建最小 TOML 配置模板
+lm completions zsh > ~/.zfunc/_lm
 lm set docker daocloud
 lm set pip first              # 使用内置列表第一个源
 lm set docker https://mirror.example.com
@@ -32,9 +36,11 @@ lm set all --atomic             # 可回滚 adapter 的全量修改
 lm reset docker
 ```
 
-`list`、`measure`、`check`、`get` 支持 `--format table|json`。
+`list`、`measure`、`check`、`get` 支持 `--format table|json`；JSON 记录包含
+`schema = "lm/v1"`。`get --all-scopes` 可一次查看各有效作用域的配置。
 `measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
 `--only-installed`、`--parallelism 1..64`。`get`、`plan` 也支持 `--only-installed`。
+`set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前进行协议探测；两者可同时使用。
 命令别名为：`ls/l`、`m/cesu`、`verify`、`g`、`s`、`r`。
 
 ## TOML 配置
@@ -114,10 +120,17 @@ APT 默认写入 `/etc/apt/sources.list.d/lazy-mirror.list`，可用 `LM_APT_SOU
 没有稳定内置源语义的项目仍然支持 URL/TOML 覆盖，但不会伪造内置 mirror。系统发行版目标
 同样只接受显式 URL 或 `[mirrors]` 配置，并且只在指定 scope 写入。
 
+Gentoo 使用受管的 `GENTOO_MIRRORS` 配置块，ROS 使用带发行版代号的 APT 源；可用
+`LM_ROS_DISTRIBUTION` 覆盖代号。系统平台配置仍要求显式 `--scope system`。
+
+MSYS2 根据 `MSYSTEM` 选择对应的 `mirrorlist.*`；可用 `LM_MSYS2_MIRRORLIST` 指定文件。
+Termux 要求 `PREFIX` 环境变量，避免在错误目录创建仓库配置。
+
 ## Docker 与 Hugging Face
 
 Docker 默认镜像来自 [DaoCloud public-image-mirror](https://github.com/DaoCloud/public-image-mirror)，
 内置源仅保留 `daocloud`；仍可传任意 HTTP(S) URL 覆盖内置选择。
+Docker、containerd/nerdctl、Podman 会按 `user`/`system` scope 分别写入用户或系统配置。
 
 ```bash
 lm list docker

@@ -51,7 +51,7 @@ pub fn gradle_set(mirror: &str) -> io::Result<()> {
 }
 
 pub fn gradle_unset() -> io::Result<()> {
-    crate::remove_owned_if(&gradle_config_path()?, |content| {
+    crate::remove_with_backup_if(&gradle_config_path()?, |content| {
         content.starts_with(GRADLE_CONFIG_PREFIX) && content.ends_with(GRADLE_CONFIG_SUFFIX)
     })?;
     Ok(())

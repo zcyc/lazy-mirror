@@ -8,6 +8,7 @@ fn list_json_is_machine_readable() {
         .unwrap();
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema"], "lm/v1");
     assert_eq!(value["target"], "docker");
     assert_eq!(value["mirrors"][0]["name"], "daocloud");
 }
@@ -43,7 +44,7 @@ fn effective_config_is_machine_readable_and_redacts_credentials() {
     ));
     std::fs::write(
         &path,
-        "[mirrors]\nprivate = \"https://user:secret@example.com/simple\"\n[defaults]\npip = \"private\"\n",
+        "[mirrors]\nprivate = \"https://example.com/simple?token=secret\"\n[defaults]\npip = \"private\"\n",
     )
     .unwrap();
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
@@ -62,6 +63,33 @@ fn effective_config_is_machine_readable_and_redacts_credentials() {
     assert_eq!(value["mirrors"]["private"], "https://example.com/simple");
     assert_eq!(value["defaults"]["pip"], "private");
     assert!(!String::from_utf8_lossy(&output.stdout).contains("secret"));
+    std::fs::remove_file(path).unwrap();
+}
+
+#[test]
+fn config_init_creates_a_template_without_overwriting() {
+    let path = std::env::temp_dir().join(format!(
+        "lm-cli-init-{}-{}.toml",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos()
+    ));
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["--config", path.to_str().unwrap(), "config", "init"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert!(std::fs::read_to_string(&path)
+        .unwrap()
+        .contains("[options]"));
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["--config", path.to_str().unwrap(), "config", "init"])
+        .output()
+        .unwrap();
+    assert_eq!(output.status.code(), Some(1));
     std::fs::remove_file(path).unwrap();
 }
 
@@ -87,6 +115,7 @@ fn chsrc_target_aliases_and_plan_are_available() {
         .unwrap();
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["schema"], "lm/v1");
     assert_eq!(value[0]["desired"], "https://mirror.example.com");
 }
 
