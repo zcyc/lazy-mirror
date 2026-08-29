@@ -662,9 +662,9 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
         Target::Openwrt => TargetCapabilities::new(false, false, true, true, &["opkg"]),
         Target::Openkylin => TargetCapabilities::new(false, false, true, true, &["apt"]),
         Target::Termux => TargetCapabilities::new(false, true, false, false, &["pkg"]),
-        Target::Freebsd => TargetCapabilities::new(false, true, false, false, &["pkg"]),
-        Target::Openbsd => TargetCapabilities::new(false, true, false, false, &["pkg_add"]),
-        Target::Netbsd => TargetCapabilities::new(false, true, false, false, &["pkgin"]),
+        Target::Freebsd => TargetCapabilities::new(false, false, true, false, &["pkg"]),
+        Target::Openbsd => TargetCapabilities::new(false, false, true, false, &["pkg_add"]),
+        Target::Netbsd => TargetCapabilities::new(false, false, true, false, &["pkgin"]),
         Target::All => TargetCapabilities::new(false, false, false, false, &[]),
     }
 }
@@ -868,7 +868,7 @@ fn run_action(
             Action::Set => lm::rust::set(mirror.unwrap(), scope),
             Action::Reset => lm::rust::unset(scope),
         },
-        Target::Rust => run_group(action, mirror, scope, &[Target::Cargo, Target::Rustup]),
+        Target::Rust => run_rust_group(action, mirror, scope),
         Target::Docker => match action {
             Action::Set => lm::docker::set(mirror.unwrap(), scope),
             Action::Reset => lm::docker::unset(scope),
@@ -899,7 +899,7 @@ fn run_action(
         Target::Dart => run_dart_group(action, mirror, scope),
         Target::Flutter => match action {
             Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope),
-            Action::Reset => lm::dart::unset(scope),
+            Action::Reset => lm::dart::flutter_unset(scope),
         },
         Target::Nuget | Target::Dotnet => match action {
             Action::Set => lm::nuget::set(mirror.unwrap(), scope),
@@ -989,8 +989,8 @@ fn run_action(
             Action::Reset => lm::platform::flatpak_unset(scope),
         },
         Target::Nix => match action {
-            Action::Set => lm::platform::env_set("nix", "NIX_CONFIG", mirror.unwrap(), scope),
-            Action::Reset => lm::platform::env_unset("nix", scope),
+            Action::Set => lm::platform::nix_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::nix_unset(scope),
         },
         Target::Guix => match action {
             Action::Set => {
@@ -1063,19 +1063,43 @@ fn run_group(
     }
 }
 
+fn run_rust_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
+    let cargo_installed = is_installed(Target::Cargo);
+    let rustup_installed = is_installed(Target::Rustup);
+    if !cargo_installed && !rustup_installed {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "neither cargo nor rustup is installed",
+        ));
+    }
+    let rustup_mirror = if rustup_installed && action == Action::Set {
+        Some(lm::rust::rustup_mirror(mirror.unwrap())?)
+    } else {
+        None
+    };
+    if cargo_installed {
+        run_action(Target::Cargo, action, mirror, scope)?;
+    }
+    if rustup_installed {
+        run_action(Target::Rustup, action, rustup_mirror.as_deref(), scope)?;
+    }
+    Ok(())
+}
+
 fn run_dart_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
+    let flutter_mirror = mirror.map(lm::dart::flutter_mirror);
     let mut applied = false;
     if is_installed(Target::Dart) {
         match action {
             Action::Set => lm::dart::dart_set(mirror.unwrap(), scope)?,
-            Action::Reset => lm::dart::unset(scope)?,
+            Action::Reset => lm::dart::dart_unset(scope)?,
         }
         applied = true;
     }
     if is_installed(Target::Flutter) {
         match action {
-            Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope)?,
-            Action::Reset => lm::dart::unset(scope)?,
+            Action::Set => lm::dart::flutter_set(flutter_mirror.as_deref().unwrap(), scope)?,
+            Action::Reset => lm::dart::flutter_unset(scope)?,
         }
         applied = true;
     }
@@ -1173,6 +1197,14 @@ fn verification_targets(target: Target) -> Vec<Target> {
     }
 }
 
+fn group_member_mirror(group: Target, member: Target, mirror: &str) -> io::Result<String> {
+    match (group, member) {
+        (Target::Dart, Target::Flutter) => Ok(lm::dart::flutter_mirror(mirror)),
+        (Target::Rust, Target::Rustup) => lm::rust::rustup_mirror(mirror),
+        _ => Ok(mirror.to_owned()),
+    }
+}
+
 fn installed_targets(target: Target, scope: Scope) -> Vec<Target> {
     verification_targets(target)
         .into_iter()
@@ -1224,31 +1256,34 @@ fn change_records(
 ) -> io::Result<Vec<ChangeRecord>> {
     let mut records = installed_targets(target, options.scope)
         .into_iter()
-        .map(|target| {
+        .map(|member| {
             let before = before
                 .iter()
-                .find(|(current, _)| *current == target)
+                .find(|(current, _)| *current == member)
                 .and_then(|(_, source)| source.clone());
+            let desired = mirror
+                .map(|mirror| group_member_mirror(target, member, mirror))
+                .transpose()?;
             let (after, path) = if options.dry_run {
                 (before.clone(), None)
             } else {
-                inspect(target, config, options.scope)
+                inspect(member, config, options.scope)
                     .map(|status| (status.source, status.path))
                     .unwrap_or((None, None))
             };
             Ok(ChangeRecord {
-                target: target_name(target).to_owned(),
+                target: target_name(member).to_owned(),
                 action: match action {
                     Action::Set => "set",
                     Action::Reset => "reset",
                 },
                 scope: scope_name(options.scope),
                 changed: match action {
-                    Action::Set => !same_source(before.as_deref(), mirror),
+                    Action::Set => !same_source(before.as_deref(), desired.as_deref()),
                     Action::Reset => before.is_some(),
                 },
                 before,
-                desired: mirror.map(str::to_owned),
+                desired,
                 after,
                 path: path.map(|path| path.display().to_string()),
                 dry_run: options.dry_run,
@@ -1300,8 +1335,15 @@ fn print_change_records(records: &[ChangeRecord]) -> io::Result<()> {
 
 fn same_source(left: Option<&str>, right: Option<&str>) -> bool {
     left.zip(right)
-        .is_some_and(|(left, right)| left.trim_end_matches('/') == right.trim_end_matches('/'))
+        .is_some_and(|(left, right)| normalize_source(left) == normalize_source(right))
         || left.is_none() && right.is_none()
+}
+
+fn normalize_source(value: &str) -> &str {
+    value
+        .strip_prefix("sparse+")
+        .unwrap_or(value)
+        .trim_end_matches('/')
 }
 
 fn print_table_change(
@@ -1341,8 +1383,11 @@ fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<Rollba
     for snapshot in snapshots {
         for (target, source) in snapshot.iter().rev() {
             let result = match source {
-                Some(source) => run_action(*target, Action::Set, Some(source), scope),
-                None => run_action(*target, Action::Reset, None, scope),
+                Some(source) => {
+                    let source = lm::platform::source_for_restore(target_name(*target), source);
+                    restore_target(*target, Some(&source), scope)
+                }
+                None => restore_target(*target, None, scope),
             };
             if let Err(error) = result {
                 errors.push(format!("rollback {} failed: {error}", target_name(*target)));
@@ -1353,6 +1398,23 @@ fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<Rollba
         Ok(mode)
     } else {
         Err(io::Error::other(errors.join("; ")))
+    }
+}
+
+fn restore_target(target: Target, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
+    match target {
+        Target::Dart => match mirror {
+            Some(mirror) => lm::dart::dart_set(mirror, scope),
+            None => lm::dart::dart_unset(scope),
+        },
+        Target::Flutter => match mirror {
+            Some(mirror) => lm::dart::flutter_set(mirror, scope),
+            None => lm::dart::flutter_unset(scope),
+        },
+        _ => match mirror {
+            Some(mirror) => run_action(target, Action::Set, Some(mirror), scope),
+            None => run_action(target, Action::Reset, None, scope),
+        },
     }
 }
 
@@ -1464,13 +1526,14 @@ fn apt_source_matches(source: &str, expected: &str) -> bool {
 
 fn verify_applied(target: Target, mirror: &str, scope: Scope) -> io::Result<()> {
     let mut checked = false;
-    for target in installed_targets(target, scope) {
+    for member in installed_targets(target, scope) {
         checked = true;
-        let status = inspect_with_expected(target, mirror, scope)?;
-        if !source_matches(target, &status, mirror) {
+        let expected = group_member_mirror(target, member, mirror)?;
+        let status = inspect_with_expected(member, &expected, scope)?;
+        if !source_matches(member, &status, &expected) {
             return Err(io::Error::other(format!(
                 "post-write verification failed for {}: configured source is {}",
-                target_name(target),
+                target_name(member),
                 status.source.as_deref().unwrap_or("not configured")
             )));
         }
@@ -1842,7 +1905,7 @@ fn inspect_with_expected(
         Target::Ocaml => lm::platform::opam_status(scope),
         Target::Cocoapods => lm::platform::cocoapods_status(expected, scope),
         Target::Flathub => lm::platform::flatpak_status(expected, scope),
-        Target::Nix => lm::platform::env_status("nix", "nix", "NIX_CONFIG", expected, scope),
+        Target::Nix => lm::platform::nix_status(expected, scope),
         Target::Guix => {
             lm::platform::env_status("guix", "guix", "GUIX_SUBSTITUTE_URLS", expected, scope)
         }
@@ -2957,7 +3020,7 @@ fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str,
         Target::Cpan => vec![("PERL_CPAN_MIRROR", mirror.to_owned())],
         Target::Rye => vec![("RYE_PYPI_MIRROR", mirror.to_owned())],
         Target::Nvm => vec![("NVM_NODEJS_ORG_MIRROR", mirror.to_owned())],
-        Target::Nix => vec![("NIX_CONFIG", mirror.to_owned())],
+        Target::Nix => vec![("NIX_CONFIG", format!("substituters = {mirror}"))],
         Target::Guix => vec![("GUIX_SUBSTITUTE_URLS", mirror.to_owned())],
         _ => return None,
     };
@@ -3375,6 +3438,9 @@ mod tests {
         assert!(npm.supports(Scope::Project));
         assert!(!npm.supports(Scope::System));
         assert!(!npm.atomic);
+
+        assert!(!target_capabilities(Target::Freebsd).supports(Scope::User));
+        assert!(target_capabilities(Target::Freebsd).supports(Scope::System));
     }
 
     #[test]
@@ -3467,5 +3533,37 @@ mod tests {
         );
         assert_eq!(shell_single_quote("a'b"), "'a'\\''b'");
         assert_eq!(powershell_single_quote("a'b"), "'a''b'");
+        assert_eq!(
+            environment_values(Target::Nix, "https://cache.example"),
+            Some(vec![(
+                "NIX_CONFIG",
+                "substituters = https://cache.example".to_owned()
+            )])
+        );
+    }
+
+    #[test]
+    fn grouped_mirrors_are_mapped_for_each_adapter() {
+        assert_eq!(
+            group_member_mirror(
+                Target::Dart,
+                Target::Flutter,
+                "https://mirror.sjtu.edu.cn/dart-pub"
+            )
+            .unwrap(),
+            "https://mirror.sjtu.edu.cn"
+        );
+        assert_eq!(
+            group_member_mirror(Target::Rust, Target::Rustup, "https://rsproxy.cn/index/").unwrap(),
+            "https://rsproxy.cn"
+        );
+    }
+
+    #[test]
+    fn change_records_normalize_cargo_sparse_sources() {
+        assert!(same_source(
+            Some("sparse+https://mirror.example/index/"),
+            Some("https://mirror.example/index")
+        ));
     }
 }

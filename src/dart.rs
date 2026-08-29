@@ -26,9 +26,17 @@ pub fn flutter_set(mirror: &str, scope: Scope) -> io::Result<()> {
     )
 }
 
-pub fn unset(scope: Scope) -> io::Result<()> {
-    crate::remove_named_managed_block(&profile_path(scope)?, "dart")?;
+pub fn dart_unset(scope: Scope) -> io::Result<()> {
+    crate::remove_named_managed_block(&profile_path(scope)?, "dart")
+}
+
+pub fn flutter_unset(scope: Scope) -> io::Result<()> {
     crate::remove_named_managed_block(&profile_path(scope)?, "flutter")
+}
+
+pub fn unset(scope: Scope) -> io::Result<()> {
+    dart_unset(scope)?;
+    flutter_unset(scope)
 }
 
 pub fn dart_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
@@ -87,6 +95,17 @@ fn pub_url(mirror: &str) -> String {
     mirror.to_owned()
 }
 
+pub fn flutter_mirror(mirror: &str) -> String {
+    let mirror = mirror.trim_end_matches('/');
+    if let Some(base) = mirror.strip_suffix("/dart-pub") {
+        return base.to_owned();
+    }
+    if mirror == "https://pub.flutter-io.cn" {
+        return "https://storage.flutter-io.cn".to_owned();
+    }
+    mirror.to_owned()
+}
+
 fn profile_path(scope: Scope) -> io::Result<PathBuf> {
     match scope {
         Scope::Project => std::env::current_dir().map(|path| path.join(".env")),
@@ -119,5 +138,22 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
                 Ok(PathBuf::from("/etc/profile"))
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::flutter_mirror;
+
+    #[test]
+    fn dart_mirror_maps_to_flutter_storage_mirror() {
+        assert_eq!(
+            flutter_mirror("https://mirror.sjtu.edu.cn/dart-pub"),
+            "https://mirror.sjtu.edu.cn"
+        );
+        assert_eq!(
+            flutter_mirror("https://pub.flutter-io.cn"),
+            "https://storage.flutter-io.cn"
+        );
     }
 }

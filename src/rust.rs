@@ -52,6 +52,25 @@ pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
     )
 }
 
+pub fn rustup_mirror(mirror: &str) -> io::Result<String> {
+    let mirror = normalize_registry(mirror);
+    if mirror == "https://rsproxy.cn/index" {
+        return Ok("https://rsproxy.cn".to_owned());
+    }
+    if mirror
+        .split_once("://")
+        .is_some_and(|(_, authority)| !authority.contains('/'))
+    {
+        return Ok(mirror.to_owned());
+    }
+    Err(io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!(
+            "Rust mirror {mirror} has no safe Rustup equivalent; configure cargo and rustup separately"
+        ),
+    ))
+}
+
 fn validate_mirror(mirror: &str) -> io::Result<()> {
     let url = mirror.strip_prefix("sparse+").unwrap_or(mirror);
     if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -82,7 +101,7 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
         .and_then(|document| registry(&document).map(str::to_owned));
     let configured = source
         .as_deref()
-        .is_some_and(|value| value.trim_start_matches("sparse+") == expected.trim_end_matches('/'));
+        .is_some_and(|value| normalize_registry(value) == normalize_registry(expected));
     Ok(crate::ToolStatus::new(
         version,
         configured,
@@ -94,6 +113,13 @@ pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
             path.display()
         ),
     ))
+}
+
+fn normalize_registry(value: &str) -> &str {
+    value
+        .strip_prefix("sparse+")
+        .unwrap_or(value)
+        .trim_end_matches('/')
 }
 
 fn config_path(scope: Scope) -> io::Result<PathBuf> {
@@ -197,5 +223,26 @@ mod tests {
         assert!(validate_mirror("sparse+https://mirror.example/index/").is_ok());
         assert!(validate_mirror("oci://registry.example.com").is_err());
         assert!(validate_mirror("https://mirror.example/index?token=secret").is_err());
+    }
+
+    #[test]
+    fn rust_group_maps_only_known_cargo_mirror_to_rustup() {
+        assert_eq!(
+            rustup_mirror("https://rsproxy.cn/index/").unwrap(),
+            "https://rsproxy.cn"
+        );
+        assert!(rustup_mirror("https://mirrors.ustc.edu.cn/crates.io-index/").is_err());
+    }
+
+    #[test]
+    fn cargo_status_accepts_sparse_expected_urls() {
+        assert_eq!(
+            normalize_registry("sparse+https://mirror.example/index/"),
+            "https://mirror.example/index"
+        );
+        assert_eq!(
+            normalize_registry("https://mirror.example/index"),
+            "https://mirror.example/index"
+        );
     }
 }

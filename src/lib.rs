@@ -205,8 +205,23 @@ fn replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
         Ok(()) => Ok(()),
         #[cfg(windows)]
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
-            fs::remove_file(path)?;
-            fs::rename(temporary, path)
+            let mut backup = temporary.as_os_str().to_os_string();
+            backup.push(".old");
+            let backup = PathBuf::from(backup);
+            fs::rename(path, &backup)?;
+            match fs::rename(temporary, path) {
+                Ok(()) => {
+                    let _ = fs::remove_file(&backup);
+                    Ok(())
+                }
+                Err(replace_error) => match fs::rename(&backup, path) {
+                    Ok(()) => Err(replace_error),
+                    Err(restore_error) => Err(io::Error::other(format!(
+                        "{replace_error}; failed to restore {}: {restore_error}",
+                        path.display()
+                    ))),
+                },
+            }
         }
         Err(error) => Err(error),
     }
@@ -271,15 +286,26 @@ pub(crate) fn shell_env_value(line: &str, variable: &str) -> Option<String> {
 }
 
 #[cfg(windows)]
-pub(crate) fn powershell_profile_path() -> io::Result<std::path::PathBuf> {
-    dirs::document_dir()
-        .map(|path| path.join("PowerShell/Microsoft.PowerShell_profile.ps1"))
-        .ok_or_else(|| {
-            io::Error::new(
-                io::ErrorKind::NotFound,
-                "cannot determine Documents directory",
-            )
-        })
+pub(crate) fn powershell_profile_path() -> io::Result<PathBuf> {
+    let documents = dirs::document_dir().ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::NotFound,
+            "cannot determine Documents directory",
+        )
+    })?;
+    let modern = documents.join("PowerShell/Microsoft.PowerShell_profile.ps1");
+    let legacy = documents.join("WindowsPowerShell/Microsoft.PowerShell_profile.ps1");
+    let use_legacy = if legacy.is_file() != modern.is_file() {
+        legacy.is_file()
+    } else {
+        std::env::var_os("PSModulePath")
+            .map(|value| {
+                let value = value.to_string_lossy().to_ascii_lowercase();
+                value.contains("windowspowershell") && !value.contains("powershell\\7")
+            })
+            .unwrap_or(false)
+    };
+    Ok(if use_legacy { legacy } else { modern })
 }
 
 #[cfg(windows)]

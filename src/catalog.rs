@@ -645,7 +645,7 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
             |mirror| Ok(mirror.url.to_owned()),
         );
     }
-    if is_url(selection) {
+    if crate::config::is_selection_url(spec.name, selection) {
         return Ok(selection.to_owned());
     }
     if let Some(url) = config.mirror(selection) {
@@ -741,6 +741,15 @@ mod tests {
         assert_eq!(
             resolve("huggingface", Some("hf-mirror"), &config).unwrap(),
             "https://hf-mirror.com"
+        );
+        assert_eq!(
+            resolve(
+                "cargo",
+                Some("sparse+https://mirror.example/index/"),
+                &config
+            )
+            .unwrap(),
+            "sparse+https://mirror.example/index/"
         );
         assert_eq!(
             resolve("docker", Some("first"), &config).unwrap(),

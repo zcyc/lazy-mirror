@@ -430,7 +430,7 @@ fn validate_selection(
     spec: &crate::catalog::TargetSpec,
     mirrors: &BTreeMap<String, String>,
 ) -> io::Result<()> {
-    let valid = is_url(selection)
+    let valid = is_selection_url(target, selection)
         || mirrors.contains_key(selection)
         || (selection == "first" && !spec.mirrors.is_empty())
         || spec.mirrors.iter().any(|mirror| mirror.name == selection);
@@ -624,6 +624,10 @@ pub(crate) fn is_url(value: &str) -> bool {
                 || character.is_whitespace()
                 || matches!(character, '"' | '\'' | '\\' | '$' | '`')
         })
+}
+
+pub(crate) fn is_selection_url(target: &str, value: &str) -> bool {
+    is_url(value) || (target == "cargo" && value.strip_prefix("sparse+").is_some_and(is_url))
 }
 
 fn redact_url(value: &str) -> String {

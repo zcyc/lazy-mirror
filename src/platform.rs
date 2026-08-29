@@ -111,6 +111,33 @@ pub fn env_status(
     Ok(status)
 }
 
+pub fn nix_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    env_set(
+        "nix",
+        "NIX_CONFIG",
+        &format!("substituters = {mirror}"),
+        scope,
+    )
+}
+
+pub fn nix_unset(scope: Scope) -> io::Result<()> {
+    env_unset("nix", scope)
+}
+
+pub fn nix_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let mut status = profile_status("nix", "nix", "NIX_CONFIG", scope)?;
+    let source = status
+        .source
+        .as_deref()
+        .and_then(nix_mirror)
+        .map(str::to_owned);
+    status.configured = source
+        .as_deref()
+        .is_some_and(|value| value.trim_end_matches('/') == expected.trim_end_matches('/'));
+    status.source = source;
+    Ok(status)
+}
+
 pub fn luarocks_set(mirror: &str, scope: Scope) -> io::Result<()> {
     let path = config_path("luarocks", scope)?;
     crate::write_with_backup_if(
@@ -794,7 +821,6 @@ fn profile_status(
 ) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version(command)?;
     let path = profile_path(scope)?;
-    let value = std::env::var(variable).ok();
     let marker = format!("# >>> lazy-mirror:{name} >>>");
     let in_profile = std::fs::read_to_string(&path).ok().and_then(|content| {
         content
@@ -803,20 +829,42 @@ fn profile_status(
             .flatten()
             .and_then(|line| crate::shell_env_value(line, variable))
     });
-    let source = value.clone().or_else(|| in_profile.clone());
+    let source = in_profile.clone();
     Ok(crate::ToolStatus {
         version,
         configured: source.is_some(),
-        source,
+        source: source.clone(),
         path: Some(path.clone()),
         detail: format!(
             "{variable}={}; profile={}",
-            value
-                .or(in_profile)
-                .unwrap_or_else(|| "not configured".to_owned()),
+            source.as_deref().unwrap_or("not configured"),
             path.display()
         ),
     })
+}
+
+fn nix_mirror(value: &str) -> Option<&str> {
+    value.lines().find_map(|line| {
+        let (key, value) = line.split_once('=')?;
+        (key.trim() == "substituters")
+            .then(|| value.split_whitespace().next())
+            .flatten()
+    })
+}
+
+pub fn source_for_restore(name: &str, source: &str) -> String {
+    let suffix = match name {
+        "arch" | "archlinuxcn" | "manjaro" => Some("/$repo/os/$arch"),
+        "msys2" => Some("/$repo/$arch"),
+        "voidlinux" => Some("/current/$XBPS_ARCH"),
+        "brew" => Some("/homebrew-bottles"),
+        _ => None,
+    };
+    suffix
+        .and_then(|suffix| source.strip_suffix(suffix))
+        .unwrap_or(source)
+        .trim_end_matches('/')
+        .to_owned()
 }
 
 fn profile_path(scope: Scope) -> io::Result<PathBuf> {
@@ -898,7 +946,7 @@ pub(crate) fn apt_distribution() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::os_content;
+    use super::{nix_mirror, os_content, source_for_restore};
 
     #[test]
     fn msys2_uses_pacman_repository_layout() {
@@ -906,5 +954,26 @@ mod tests {
             os_content("msys2", "https://mirror.example"),
             "# managed by lazy-mirror:msys2\nServer = https://mirror.example/$repo/$arch\n"
         );
+    }
+
+    #[test]
+    fn rendered_sources_are_normalized_before_restore() {
+        assert_eq!(
+            source_for_restore("arch", "https://mirror.example/$repo/os/$arch"),
+            "https://mirror.example"
+        );
+        assert_eq!(
+            source_for_restore("brew", "https://mirror.example/homebrew-bottles"),
+            "https://mirror.example"
+        );
+    }
+
+    #[test]
+    fn nix_config_source_extracts_substituter() {
+        assert_eq!(
+            nix_mirror("substituters = https://cache.example"),
+            Some("https://cache.example")
+        );
+        assert_eq!(nix_mirror("https://cache.example"), None);
     }
 }
