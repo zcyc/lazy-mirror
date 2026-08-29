@@ -1,3 +1,4 @@
+use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
 use crate::config::Config;
@@ -267,6 +268,11 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "docker",
         aliases: &["dockerhub"],
+        mirrors: DOCKER,
+    },
+    TargetSpec {
+        name: "buildkit",
+        aliases: &["docker-buildkit", "buildx"],
         mirrors: DOCKER,
     },
     TargetSpec {
@@ -620,6 +626,42 @@ pub fn builtin_mirrors(target: &str) -> io::Result<&'static [MirrorSpec]> {
         .ok_or_else(|| invalid_target(target))
 }
 
+pub fn lint() -> io::Result<()> {
+    let mut selectors = BTreeMap::new();
+    for target in TARGETS {
+        if selectors.insert(target.name, target.name).is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("duplicate catalog target {}", target.name),
+            ));
+        }
+        for alias in target.aliases {
+            if selectors.insert(*alias, target.name).is_some() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("duplicate catalog selector {alias}"),
+                ));
+            }
+        }
+        let mut mirrors = BTreeSet::new();
+        for mirror in target.mirrors {
+            if mirror.name.is_empty() || !mirrors.insert(mirror.name) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("duplicate or empty mirror name in {}", target.name),
+                ));
+            }
+            if !is_url(mirror.url) {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    format!("invalid mirror URL {} for {}", mirror.url, target.name),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn is_url(value: &str) -> bool {
     crate::config::is_url(value)
 }
@@ -662,5 +704,10 @@ mod tests {
             "https://docker.m.daocloud.io"
         );
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn built_in_catalog_is_valid() {
+        lint().unwrap();
     }
 }

@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process;
 use std::thread;
 
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use lm::config::{Config, Scope};
 
@@ -29,6 +29,8 @@ parallelism = 4
 struct Cli {
     #[arg(long, global = true, value_name = "FILE")]
     config: Option<PathBuf>,
+    #[arg(long, global = true, conflicts_with = "config")]
+    no_config: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -55,6 +57,8 @@ enum Commands {
         only_installed: bool,
         #[arg(long)]
         parallelism: Option<usize>,
+        #[command(flatten)]
+        ip: IpOptions,
     },
     #[command(about = "Check mirror protocol endpoints", visible_alias = "verify")]
     Check {
@@ -70,6 +74,8 @@ enum Commands {
         only_installed: bool,
         #[arg(long)]
         parallelism: Option<usize>,
+        #[command(flatten)]
+        ip: IpOptions,
     },
     #[command(about = "Show the current source", visible_alias = "g")]
     Get {
@@ -113,6 +119,11 @@ enum Commands {
         #[command(subcommand)]
         command: ConfigCommand,
     },
+    #[command(about = "Validate the built-in target and mirror catalog")]
+    Catalog {
+        #[command(subcommand)]
+        command: CatalogCommand,
+    },
     #[command(about = "Generate shell completion script")]
     Completions {
         #[arg(value_enum)]
@@ -143,6 +154,8 @@ enum Commands {
         parallelism: Option<usize>,
         #[arg(long)]
         explain: bool,
+        #[command(flatten)]
+        ip: IpOptions,
     },
     #[command(about = "Show the exact source change plan", visible_alias = "diff")]
     Plan {
@@ -170,6 +183,20 @@ enum ConfigCommand {
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
+    #[command(about = "Show configuration files and precedence")]
+    Sources {
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum CatalogCommand {
+    #[command(about = "Validate target names, aliases and mirror URLs")]
+    Lint {
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -194,6 +221,26 @@ enum EnvShell {
     Sh,
     Fish,
     Powershell,
+}
+
+#[derive(Debug, Clone, Copy, Args)]
+struct IpOptions {
+    #[arg(long, conflicts_with = "ipv6")]
+    ipv4: bool,
+    #[arg(long, conflicts_with = "ipv4")]
+    ipv6: bool,
+}
+
+impl IpOptions {
+    fn version(self) -> lm::probe::IpVersion {
+        if self.ipv4 {
+            lm::probe::IpVersion::V4
+        } else if self.ipv6 {
+            lm::probe::IpVersion::V6
+        } else {
+            lm::probe::IpVersion::Any
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -231,6 +278,8 @@ enum Target {
     Rust,
     #[value(alias = "dockerhub")]
     Docker,
+    #[value(alias = "docker-buildkit", alias = "buildx")]
+    Buildkit,
     Containerd,
     Nerdctl,
     Podman,
@@ -429,6 +478,7 @@ struct MeasureRecord {
     state: String,
     detail: Option<String>,
     milliseconds: Option<u128>,
+    metrics: Option<lm::probe::ProbeMetrics>,
     cached: bool,
     error: Option<String>,
 }
@@ -440,6 +490,7 @@ struct ProbeOptions {
     no_cache: bool,
     only_installed: bool,
     parallelism: Option<usize>,
+    ip_version: lm::probe::IpVersion,
 }
 
 #[derive(Clone, Copy)]
@@ -519,6 +570,9 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
         Target::Cargo => TargetCapabilities::new(true, true, true, true, &["cargo"]),
         Target::Rust => TargetCapabilities::new(true, true, true, true, &["cargo", "rustup"]),
         Target::Docker => TargetCapabilities::new(false, true, true, true, &["docker"]),
+        Target::Buildkit => {
+            TargetCapabilities::new(false, true, true, true, &["docker", "buildctl"])
+        }
         Target::Containerd | Target::Nerdctl => {
             TargetCapabilities::new(false, true, true, true, &["containerd", "nerdctl"])
         }
@@ -620,6 +674,7 @@ fn target_name(target: Target) -> &'static str {
         Target::Cargo => "cargo",
         Target::Rust => "rust",
         Target::Docker => "docker",
+        Target::Buildkit => "buildkit",
         Target::Containerd => "containerd",
         Target::Nerdctl => "nerdctl",
         Target::Podman => "podman",
@@ -821,6 +876,10 @@ fn run_action(
         Target::Docker => match action {
             Action::Set => lm::docker::set(mirror.unwrap(), scope),
             Action::Reset => lm::docker::unset(scope),
+        },
+        Target::Buildkit => match action {
+            Action::Set => lm::docker::buildkit_set(mirror.unwrap(), scope),
+            Action::Reset => lm::docker::buildkit_unset(scope),
         },
         Target::Containerd | Target::Nerdctl => match action {
             Action::Set => lm::container::containerd_set(mirror.unwrap(), scope),
@@ -1047,6 +1106,7 @@ fn select_mirror(
         config,
         cache,
         Some(config.settings().parallelism),
+        lm::probe::IpVersion::Any,
     )?
     .into_iter()
     .collect::<Vec<_>>();
@@ -1070,6 +1130,7 @@ fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()
         mirror,
         config.settings().timeout_seconds,
         config.settings().retries,
+        lm::probe::IpVersion::Any,
     )?;
     if state_is_usable(catalog_name(target), &result.state) {
         Ok(())
@@ -1345,6 +1406,7 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
         Target::Sbt => lm::sbt::status(&expected),
         Target::Cargo | Target::Rust => lm::rust::status(&expected, scope),
         Target::Docker => lm::docker::status(scope),
+        Target::Buildkit => lm::docker::buildkit_status(scope),
         Target::Containerd | Target::Nerdctl => {
             lm::container::containerd_status(target_name(target), scope)
         }
@@ -1653,9 +1715,16 @@ fn doctor(
         let status = status_record(target, config, scope);
         let desired = lm::catalog::resolve(catalog_name(target), selector, config);
         let health = desired.as_ref().ok().and_then(|url| {
-            measure_one(target, Some(url), config, &mut cache, options.parallelism)
-                .ok()
-                .and_then(|items| items.into_iter().next())
+            measure_one(
+                target,
+                Some(url),
+                config,
+                &mut cache,
+                options.parallelism,
+                options.ip_version,
+            )
+            .ok()
+            .and_then(|items| items.into_iter().next())
         });
         let error = status
             .error
@@ -1671,6 +1740,17 @@ fn doctor(
             "health": health.as_ref().map(|record| record.state.clone()),
             "code": health.as_ref().and_then(|record| record.code.clone()),
             "latency_ms": health.as_ref().and_then(|record| record.milliseconds),
+            "metrics": health
+                .as_ref()
+                .and_then(|record| record.metrics.as_ref())
+                .map(|metrics| serde_json::json!({
+                    "remote_ip": metrics.remote_ip,
+                    "content_type": metrics.content_type,
+                    "dns_milliseconds": metrics.dns_milliseconds,
+                    "connect_milliseconds": metrics.connect_milliseconds,
+                    "tls_milliseconds": metrics.tls_milliseconds,
+                    "ttfb_milliseconds": metrics.ttfb_milliseconds,
+                })),
             "health_usable": health.as_ref().is_some_and(probe_is_usable),
             "error": error,
         });
@@ -1749,11 +1829,24 @@ fn explanation_json(
         .unwrap_or_default();
     serde_json::json!({
         "config": config.path,
+        "config_sources": config
+            .sources()
+            .iter()
+            .map(|source| {
+                serde_json::json!({
+                    "path": source.path,
+                    "active": source.active,
+                    "loaded": source.loaded,
+                })
+            })
+            .collect::<Vec<_>>(),
         "target": target,
         "enabled": config.enabled(target),
         "scope": scope_name(scope),
         "requested_selector": selector.map(redact_selection),
         "configured_default": default,
+        "default_source": config.default_source(target),
+        "target_source": config.target_source(target),
         "mirror_pool": mirrors,
         "selection_order": [
             "CLI selector",
@@ -1948,6 +2041,7 @@ fn target_category(target: &str) -> &'static str {
         target,
         "brew"
             | "docker"
+            | "buildkit"
             | "containerd"
             | "podman"
             | "winget"
@@ -1966,6 +2060,9 @@ fn target_category(target: &str) -> &'static str {
 }
 
 fn is_installed(target: Target) -> bool {
+    if target == Target::Buildkit {
+        return lm::docker::buildkit_available();
+    }
     target_capabilities(target)
         .commands
         .iter()
@@ -2006,6 +2103,7 @@ fn measure(
             config,
             &mut cache,
             options.parallelism,
+            options.ip_version,
         )?);
     }
     cache.save()?;
@@ -2050,7 +2148,8 @@ fn probe_is_usable(record: &MeasureRecord) -> bool {
 
 fn state_is_usable(target: &str, state: &str) -> bool {
     state == "healthy"
-        || (state == "auth-required" && matches!(target, "docker" | "containerd" | "podman"))
+        || (state == "auth-required"
+            && matches!(target, "docker" | "buildkit" | "containerd" | "podman"))
 }
 
 fn measure_one(
@@ -2059,6 +2158,7 @@ fn measure_one(
     config: &Config,
     cache: &mut lm::probe::HealthCache,
     parallelism: Option<usize>,
+    ip_version: lm::probe::IpVersion,
 ) -> io::Result<Vec<MeasureRecord>> {
     let name = catalog_name(target);
     let specs = lm::catalog::builtin_mirrors(name)?;
@@ -2100,6 +2200,7 @@ fn measure_one(
                 state: "unavailable".to_owned(),
                 detail: None,
                 milliseconds: None,
+                metrics: None,
                 cached: false,
                 error: Some(format!("{name} requires a mirror name or URL")),
             }]);
@@ -2113,7 +2214,7 @@ fn measure_one(
     let mut records: Vec<Option<MeasureRecord>> = (0..candidates.len()).map(|_| None).collect();
     let mut pending = Vec::new();
     for (index, (mirror, url)) in candidates.iter().enumerate() {
-        if let Some(result) = cache.get(name, url) {
+        if let Some(result) = cache.get(name, url, ip_version) {
             records[index] = Some(MeasureRecord {
                 target: name.to_owned(),
                 mirror: mirror.clone(),
@@ -2123,6 +2224,7 @@ fn measure_one(
                 state: result.state.clone(),
                 detail: Some(result.detail.clone()),
                 milliseconds: Some(result.milliseconds),
+                metrics: Some(result.metrics.clone()),
                 cached: true,
                 error: None,
             });
@@ -2142,6 +2244,7 @@ fn measure_one(
                             &url,
                             settings.timeout_seconds,
                             settings.retries,
+                            ip_version,
                         )
                     })
                 })
@@ -2158,7 +2261,7 @@ fn measure_one(
             let (mirror, url) = &candidates[index];
             match result {
                 Ok(result) => {
-                    cache.put(name, url, result.clone());
+                    cache.put(name, url, ip_version, result.clone());
                     records[index] = Some(MeasureRecord {
                         target: name.to_owned(),
                         mirror: mirror.clone(),
@@ -2168,6 +2271,7 @@ fn measure_one(
                         state: result.state,
                         detail: Some(result.detail),
                         milliseconds: Some(result.milliseconds),
+                        metrics: Some(result.metrics),
                         cached: false,
                         error: None,
                     });
@@ -2182,6 +2286,7 @@ fn measure_one(
                         state: "error".to_owned(),
                         detail: None,
                         milliseconds: None,
+                        metrics: None,
                         cached: false,
                         error: Some(error.to_string()),
                     });
@@ -2245,6 +2350,14 @@ fn measure_json(record: &MeasureRecord) -> serde_json::Value {
         "state": record.state.clone(),
         "detail": record.detail.clone(),
         "milliseconds": record.milliseconds,
+        "metrics": record.metrics.as_ref().map(|metrics| serde_json::json!({
+            "remote_ip": metrics.remote_ip,
+            "content_type": metrics.content_type,
+            "dns_milliseconds": metrics.dns_milliseconds,
+            "connect_milliseconds": metrics.connect_milliseconds,
+            "tls_milliseconds": metrics.tls_milliseconds,
+            "ttfb_milliseconds": metrics.ttfb_milliseconds,
+        })),
         "cached": record.cached,
         "error": record.error.clone(),
     })
@@ -2311,6 +2424,60 @@ fn config_command(config: &Config, command: ConfigCommand) -> io::Result<()> {
                     options["cache_ttl_seconds"].as_u64().unwrap_or_default(),
                     options["parallelism"].as_u64().unwrap_or_default()
                 );
+                Ok(())
+            }
+        }
+        ConfigCommand::Sources { format } => {
+            let value = serde_json::json!({
+                "schema": lm::JSON_SCHEMA,
+                "config": config.path,
+                "sources": config.sources().iter().map(|source| serde_json::json!({
+                    "path": source.path,
+                    "active": source.active,
+                    "loaded": source.loaded,
+                })).collect::<Vec<_>>(),
+            });
+            if format == OutputFormat::Json {
+                print_json(&value)
+            } else {
+                for source in config.sources() {
+                    println!(
+                        "{}\t{}",
+                        if !source.active {
+                            "disabled"
+                        } else if source.loaded {
+                            "loaded"
+                        } else {
+                            "not-found"
+                        },
+                        source.path.display()
+                    );
+                }
+                Ok(())
+            }
+        }
+    }
+}
+
+fn catalog_command(command: CatalogCommand) -> io::Result<()> {
+    match command {
+        CatalogCommand::Lint { format } => {
+            lm::catalog::lint()?;
+            let target_count = lm::catalog::targets().len();
+            let mirror_count = lm::catalog::targets()
+                .iter()
+                .map(|target| target.mirrors.len())
+                .sum::<usize>();
+            let value = serde_json::json!({
+                "schema": lm::JSON_SCHEMA,
+                "valid": true,
+                "targets": target_count,
+                "mirrors": mirror_count,
+            });
+            if format == OutputFormat::Json {
+                print_json(&value)
+            } else {
+                println!("valid\ttargets={target_count}\tmirrors={mirror_count}");
                 Ok(())
             }
         }
@@ -2473,7 +2640,8 @@ _lm_completions "$@"
 
 fn run() -> io::Result<()> {
     let cli = Cli::parse();
-    let config = Config::load(cli.config.as_deref())?;
+    let skip_config = matches!(&cli.command, Commands::Catalog { .. });
+    let config = Config::load_with_options(cli.config.as_deref(), cli.no_config || skip_config)?;
     match cli.command {
         Commands::List { query, format } => list(query.as_deref(), &config, format),
         Commands::Measure {
@@ -2484,6 +2652,7 @@ fn run() -> io::Result<()> {
             no_cache,
             only_installed,
             parallelism,
+            ip,
         }
         | Commands::Check {
             target,
@@ -2493,6 +2662,7 @@ fn run() -> io::Result<()> {
             no_cache,
             only_installed,
             parallelism,
+            ip,
         } => measure(
             target,
             mirror.as_deref(),
@@ -2503,6 +2673,7 @@ fn run() -> io::Result<()> {
                 no_cache,
                 only_installed,
                 parallelism,
+                ip_version: ip.version(),
             },
         ),
         Commands::Get {
@@ -2600,6 +2771,7 @@ fn run() -> io::Result<()> {
             }
         }
         Commands::Config { command } => config_command(&config, command),
+        Commands::Catalog { command } => catalog_command(command),
         Commands::Completions { shell } => completions(shell),
         Commands::Env {
             target,
@@ -2616,6 +2788,7 @@ fn run() -> io::Result<()> {
             only_installed,
             parallelism,
             explain,
+            ip,
         } => doctor(
             target,
             mirror.as_deref(),
@@ -2627,6 +2800,7 @@ fn run() -> io::Result<()> {
                 no_cache,
                 only_installed,
                 parallelism,
+                ip_version: ip.version(),
             },
             explain,
         ),
@@ -2671,6 +2845,7 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "list", "apt", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "rustup", "rsproxy"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "buildkit", "daocloud", "--dry"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "pip", "--best", "--verify"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "pip", "--all-scopes"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "config", "init"]).is_ok());
@@ -2678,6 +2853,11 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "get", "huggingface", "--scope", "project"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "pip", "--explain"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "doctor", "pip", "--explain"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "measure", "pip", "--ipv4"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "measure", "pip", "--ipv4", "--ipv6"]).is_err());
+        assert!(Cli::try_parse_from(["lm", "config", "sources"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "catalog", "lint", "--format", "json"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "--no-config", "list"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "env", "huggingface", "hf-mirror"]).is_ok());
     }
 
@@ -2700,6 +2880,7 @@ mod tests {
             state: "auth-required".to_owned(),
             detail: None,
             milliseconds: None,
+            metrics: None,
             cached: false,
             error: None,
         };
@@ -2717,6 +2898,7 @@ mod tests {
             state: state.to_owned(),
             detail: None,
             milliseconds: Some(milliseconds),
+            metrics: None,
             cached: false,
             error: None,
         };

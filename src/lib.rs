@@ -543,13 +543,13 @@ where
     Ok(())
 }
 
-fn backup_path(path: &Path) -> PathBuf {
+pub(crate) fn backup_path(path: &Path) -> PathBuf {
     let mut backup = path.as_os_str().to_os_string();
     backup.push(".lazy-mirror.bak");
     PathBuf::from(backup)
 }
 
-fn created_marker_path(path: &Path) -> PathBuf {
+pub(crate) fn created_marker_path(path: &Path) -> PathBuf {
     let mut marker = path.as_os_str().to_os_string();
     marker.push(".lazy-mirror.created");
     PathBuf::from(marker)

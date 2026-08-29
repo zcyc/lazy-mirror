@@ -14,6 +14,13 @@ pub enum Scope {
     System,
 }
 
+#[derive(Debug, Clone)]
+pub struct ConfigSource {
+    pub path: PathBuf,
+    pub active: bool,
+    pub loaded: bool,
+}
+
 #[derive(Debug, Default)]
 pub struct Config {
     pub path: PathBuf,
@@ -21,6 +28,8 @@ pub struct Config {
     defaults: BTreeMap<String, String>,
     targets: BTreeMap<String, TargetConfig>,
     settings: Settings,
+    sources: Vec<ConfigSource>,
+    origins: BTreeMap<String, PathBuf>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -45,27 +54,111 @@ impl Default for Settings {
 #[derive(Debug, Default)]
 struct TargetConfig {
     default: Option<String>,
-    enabled: bool,
+    enabled: Option<bool>,
     mirrors: Option<Vec<String>>,
+}
+
+impl TargetConfig {
+    fn merge(&mut self, overlay: Self) {
+        if overlay.default.is_some() {
+            self.default = overlay.default;
+        }
+        if overlay.enabled.is_some() {
+            self.enabled = overlay.enabled;
+        }
+        if overlay.mirrors.is_some() {
+            self.mirrors = overlay.mirrors;
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SettingsPatch {
+    timeout_seconds: Option<u64>,
+    retries: Option<u32>,
+    cache_ttl_seconds: Option<u64>,
+    parallelism: Option<usize>,
 }
 
 impl Config {
     pub fn load(override_path: Option<&Path>) -> io::Result<Self> {
-        let path = override_path
-            .map(Path::to_path_buf)
-            .unwrap_or(default_path()?);
-        let Some(content) = read_optional(&path)? else {
-            return Ok(Self {
-                path,
-                ..Self::default()
-            });
+        Self::load_with_options(override_path, false)
+    }
+
+    pub fn load_with_options(override_path: Option<&Path>, no_config: bool) -> io::Result<Self> {
+        let primary = match override_path {
+            Some(path) => path.to_owned(),
+            None if no_config => platform_default_path()?,
+            None => default_path()?,
         };
-        let document = content.parse::<toml::Table>().map_err(|error| {
-            io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("invalid TOML config {}: {error}", path.display()),
-            )
-        })?;
+        let paths = if no_config || override_path.is_some() || env::var_os("LM_CONFIG").is_some() {
+            vec![primary.clone()]
+        } else {
+            discovered_paths(&primary)?
+        };
+        Self::load_paths(paths, primary, !no_config)
+    }
+
+    fn load_paths(paths: Vec<PathBuf>, primary: PathBuf, read_files: bool) -> io::Result<Self> {
+        let mut config = Self {
+            path: primary,
+            sources: paths
+                .into_iter()
+                .map(|path| ConfigSource {
+                    path,
+                    active: read_files,
+                    loaded: false,
+                })
+                .collect(),
+            ..Self::default()
+        };
+        if read_files {
+            for index in 0..config.sources.len() {
+                let path = config.sources[index].path.clone();
+                let Some(content) = read_optional(&path)? else {
+                    continue;
+                };
+                config.sources[index].loaded = true;
+                let document = content.parse::<toml::Table>().map_err(|error| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        format!("invalid TOML config {}: {error}", path.display()),
+                    )
+                })?;
+                config.apply_document(&document, &path)?;
+            }
+        }
+        let fallbacks = config
+            .targets
+            .iter()
+            .filter_map(|(name, target)| {
+                target
+                    .default
+                    .as_ref()
+                    .filter(|_| !config.defaults.contains_key(name))
+                    .map(|value| {
+                        (
+                            name.clone(),
+                            value.clone(),
+                            config
+                                .origins
+                                .get(&format!("target.default:{name}"))
+                                .cloned(),
+                        )
+                    })
+            })
+            .collect::<Vec<_>>();
+        for (name, value, origin) in fallbacks {
+            config.defaults.insert(name.clone(), value);
+            if let Some(origin) = origin {
+                config.origins.insert(format!("default:{name}"), origin);
+            }
+        }
+        validate_references(&config.defaults, &config.targets, &config.mirrors)?;
+        Ok(config)
+    }
+
+    fn apply_document(&mut self, document: &toml::Table, source: &Path) -> io::Result<()> {
         for key in document.keys() {
             if !matches!(key.as_str(), "mirrors" | "defaults" | "targets" | "options") {
                 return Err(io::Error::new(
@@ -74,10 +167,9 @@ impl Config {
                 ));
             }
         }
-        let raw_defaults = string_table(&document, "defaults")?;
-        let raw_targets = target_table(&document)?;
+
         let mut defaults = BTreeMap::new();
-        for (name, value) in raw_defaults {
+        for (name, value) in string_table(document, "defaults")? {
             let canonical = canonical_target(&name)?;
             if defaults.insert(canonical.clone(), value).is_some() {
                 return Err(io::Error::new(
@@ -86,8 +178,14 @@ impl Config {
                 ));
             }
         }
+        for (name, value) in defaults {
+            self.defaults.insert(name.clone(), value);
+            self.origins
+                .insert(format!("default:{name}"), source.to_owned());
+        }
+
         let mut targets = BTreeMap::new();
-        for (name, target) in raw_targets {
+        for (name, target) in target_table(document)? {
             let canonical = canonical_target(&name)?;
             if targets.insert(canonical.clone(), target).is_some() {
                 return Err(io::Error::new(
@@ -96,14 +194,23 @@ impl Config {
                 ));
             }
         }
-        for (name, target) in &targets {
-            if let Some(value) = &target.default {
-                defaults
-                    .entry(name.clone())
-                    .or_insert_with(|| value.clone());
+        for (name, target) in targets {
+            if target.default.is_some() {
+                self.origins
+                    .insert(format!("target.default:{name}"), source.to_owned());
             }
+            if target.enabled.is_some() {
+                self.origins
+                    .insert(format!("target.enabled:{name}"), source.to_owned());
+            }
+            if target.mirrors.is_some() {
+                self.origins
+                    .insert(format!("target.mirrors:{name}"), source.to_owned());
+            }
+            self.targets.entry(name).or_default().merge(target);
         }
-        let mirrors = string_table(&document, "mirrors")?;
+
+        let mirrors = string_table(document, "mirrors")?;
         for (name, url) in &mirrors {
             if !is_url(url) {
                 return Err(io::Error::new(
@@ -112,14 +219,34 @@ impl Config {
                 ));
             }
         }
-        validate_references(&defaults, &targets, &mirrors)?;
-        Ok(Self {
-            path,
-            mirrors,
-            defaults,
-            settings: settings_table(&document)?,
-            targets,
-        })
+        for (name, url) in mirrors {
+            self.mirrors.insert(name.clone(), url);
+            self.origins
+                .insert(format!("mirror:{name}"), source.to_owned());
+        }
+
+        let patch = settings_table(document)?;
+        if let Some(value) = patch.timeout_seconds {
+            self.settings.timeout_seconds = value;
+            self.origins
+                .insert("option:timeout_seconds".to_owned(), source.to_owned());
+        }
+        if let Some(value) = patch.retries {
+            self.settings.retries = value;
+            self.origins
+                .insert("option:retries".to_owned(), source.to_owned());
+        }
+        if let Some(value) = patch.cache_ttl_seconds {
+            self.settings.cache_ttl_seconds = value;
+            self.origins
+                .insert("option:cache_ttl_seconds".to_owned(), source.to_owned());
+        }
+        if let Some(value) = patch.parallelism {
+            self.settings.parallelism = value;
+            self.origins
+                .insert("option:parallelism".to_owned(), source.to_owned());
+        }
+        Ok(())
     }
 
     pub fn mirror(&self, name: &str) -> Option<&str> {
@@ -137,7 +264,10 @@ impl Config {
 
     pub fn enabled(&self, target: &str) -> bool {
         let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
-        self.targets.get(target).is_none_or(|target| target.enabled)
+        self.targets
+            .get(target)
+            .and_then(|target| target.enabled)
+            .unwrap_or(true)
     }
 
     pub fn mirrors_for(&self, target: &str) -> Option<&[String]> {
@@ -155,6 +285,25 @@ impl Config {
         self.mirrors
             .iter()
             .map(|(name, url)| (name.as_str(), url.as_str()))
+    }
+
+    pub fn sources(&self) -> &[ConfigSource] {
+        &self.sources
+    }
+
+    pub fn default_source(&self, target: &str) -> Option<&Path> {
+        let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
+        self.origins
+            .get(&format!("default:{target}"))
+            .map(PathBuf::as_path)
+    }
+
+    pub fn target_source(&self, target: &str) -> Option<&Path> {
+        let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
+        ["target.mirrors", "target.enabled", "target.default"]
+            .iter()
+            .find_map(|kind| self.origins.get(&format!("{kind}:{target}")))
+            .map(PathBuf::as_path)
     }
 
     pub fn effective_json(&self) -> serde_json::Value {
@@ -185,7 +334,9 @@ impl Config {
                     name.clone(),
                     serde_json::json!({
                         "default": default,
-                        "enabled": target.enabled,
+                        "default_source": self.default_source(name),
+                        "enabled": target.enabled.unwrap_or(true),
+                        "target_source": self.target_source(name),
                         "mirrors": mirrors,
                     }),
                 )
@@ -213,6 +364,11 @@ impl Config {
         serde_json::json!({
             "schema": crate::JSON_SCHEMA,
             "config": self.path,
+            "sources": self.sources.iter().map(|source| serde_json::json!({
+                "path": source.path,
+                "active": source.active,
+                "loaded": source.loaded,
+            })).collect::<Vec<_>>(),
             "mirrors": mirrors,
             "defaults": defaults,
             "targets": targets,
@@ -306,7 +462,7 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
                     key.clone(),
                     TargetConfig {
                         default: Some(default.to_owned()),
-                        enabled: true,
+                        enabled: None,
                         mirrors: None,
                     },
                 ));
@@ -336,13 +492,13 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
                     })
                 })
                 .transpose()?;
-            let enabled = target.get("enabled").map_or(Ok(true), |value| {
+            let enabled = target.get("enabled").map_or(Ok(None), |value| {
                 value.as_bool().ok_or_else(|| {
                     io::Error::new(
                         io::ErrorKind::InvalidData,
                         format!("TOML field [targets.{key}].enabled must be a boolean"),
                     )
-                })
+                }).map(Some)
             })?;
             let mirrors = target
                 .get("mirrors")
@@ -384,9 +540,9 @@ fn target_table(document: &toml::Table) -> io::Result<BTreeMap<String, TargetCon
         .collect()
 }
 
-fn settings_table(document: &toml::Table) -> io::Result<Settings> {
+fn settings_table(document: &toml::Table) -> io::Result<SettingsPatch> {
     let Some(value) = document.get("options") else {
-        return Ok(Settings::default());
+        return Ok(SettingsPatch::default());
     };
     let table = value.as_table().ok_or_else(|| {
         io::Error::new(
@@ -405,18 +561,18 @@ fn settings_table(document: &toml::Table) -> io::Result<Settings> {
             ));
         }
     }
-    let mut settings = Settings::default();
+    let mut settings = SettingsPatch::default();
     if let Some(value) = table.get("timeout_seconds") {
-        settings.timeout_seconds = positive_integer(value, "timeout_seconds")?;
+        settings.timeout_seconds = Some(positive_integer(value, "timeout_seconds")?);
     }
     if let Some(value) = table.get("retries") {
-        settings.retries = bounded_integer(value, "retries", 10)? as u32;
+        settings.retries = Some(bounded_integer(value, "retries", 10)? as u32);
     }
     if let Some(value) = table.get("cache_ttl_seconds") {
-        settings.cache_ttl_seconds = integer(value, "cache_ttl_seconds")?;
+        settings.cache_ttl_seconds = Some(integer(value, "cache_ttl_seconds")?);
     }
     if let Some(value) = table.get("parallelism") {
-        settings.parallelism = bounded_integer(value, "parallelism", 64)? as usize;
+        settings.parallelism = Some(bounded_integer(value, "parallelism", 64)? as usize);
     }
     Ok(settings)
 }
@@ -541,9 +697,30 @@ fn default_path() -> io::Result<PathBuf> {
         }
         return Ok(PathBuf::from(path));
     }
+    platform_default_path()
+}
+
+fn platform_default_path() -> io::Result<PathBuf> {
     dirs::config_dir()
         .map(|path| path.join("lazy-mirror/config.toml"))
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine config directory"))
+}
+
+fn discovered_paths(primary: &Path) -> io::Result<Vec<PathBuf>> {
+    let mut paths = vec![system_config_path(), primary.to_owned()];
+    paths.push(env::current_dir()?.join(".lazy-mirror/config.toml"));
+    paths.dedup();
+    Ok(paths)
+}
+
+#[cfg(windows)]
+fn system_config_path() -> PathBuf {
+    PathBuf::from(r"C:\ProgramData\lazy-mirror\config.toml")
+}
+
+#[cfg(not(windows))]
+fn system_config_path() -> PathBuf {
+    PathBuf::from("/etc/lazy-mirror/config.toml")
 }
 
 fn read_optional(path: &Path) -> io::Result<Option<String>> {
@@ -659,5 +836,39 @@ mod tests {
         assert_eq!(config.default_for("pip"), Some("corp"));
         assert!(!config.enabled("pip"));
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn layered_configs_override_only_values_they_define() {
+        let suffix = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let lower = env::temp_dir().join(format!("lm-config-layer-lower-{suffix}.toml"));
+        let upper = env::temp_dir().join(format!("lm-config-layer-upper-{suffix}.toml"));
+        fs::write(
+            &lower,
+            "[mirrors]\ncorp = \"https://lower.example/simple\"\n[defaults]\npip = \"corp\"\n[targets.pip]\nenabled = false\n[options]\ntimeout_seconds = 3\nparallelism = 2\n",
+        )
+        .unwrap();
+        fs::write(
+            &upper,
+            "[mirrors]\ncorp = \"https://upper.example/simple\"\n[targets.pip]\nenabled = true\n[options]\nretries = 4\n",
+        )
+        .unwrap();
+
+        let config =
+            Config::load_paths(vec![lower.clone(), upper.clone()], upper.clone(), true).unwrap();
+        assert_eq!(config.mirror("corp"), Some("https://upper.example/simple"));
+        assert_eq!(config.default_for("pip"), Some("corp"));
+        assert_eq!(config.default_source("pip"), Some(lower.as_path()));
+        assert_eq!(config.target_source("pip"), Some(upper.as_path()));
+        assert!(config.enabled("pip"));
+        assert_eq!(config.settings().timeout_seconds, 3);
+        assert_eq!(config.settings().retries, 4);
+        assert_eq!(config.settings().parallelism, 2);
+        assert!(config.sources().iter().all(|source| source.loaded));
+        fs::remove_file(lower).unwrap();
+        fs::remove_file(upper).unwrap();
     }
 }

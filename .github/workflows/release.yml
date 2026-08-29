@@ -1,0 +1,82 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  id-token: write
+  attestations: write
+  artifact-metadata: write
+  contents: write
+
+jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: tar.gz
+          - os: macos-13
+            target: x86_64-apple-darwin
+            archive: tar.gz
+          - os: macos-14
+            target: aarch64-apple-darwin
+            archive: tar.gz
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: zip
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - run: cargo build --locked --release --target ${{ matrix.target }}
+      - name: Package Unix archive
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          mkdir -p dist
+          cp target/${{ matrix.target }}/release/lm dist/lm
+          cp README.md LICENSE.txt dist/
+          tar -czf lm-${GITHUB_REF_NAME}-${{ matrix.target }}.tar.gz -C dist lm README.md LICENSE.txt
+      - name: Package Windows archive
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target/${{ matrix.target }}/release/lm.exe dist/lm.exe
+          Copy-Item README.md,LICENSE.txt dist/
+          Compress-Archive -Path dist/lm.exe,dist/README.md,dist/LICENSE.txt -DestinationPath "lm-$env:GITHUB_REF_NAME-${{ matrix.target }}.zip"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: lm-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive }}
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - uses: anchore/sbom-action@v0.24.0
+        with:
+          format: spdx-json
+          output-file: dist/lazy-mirror-${{ github.ref_name }}-sbom.spdx.json
+          upload-artifact: false
+          upload-release-assets: false
+      - name: Create checksums
+        shell: bash
+        run: sha256sum dist/lm-* dist/*.spdx.json > dist/SHA256SUMS
+      - uses: actions/attest@v4
+        with:
+          subject-checksums: dist/SHA256SUMS
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*

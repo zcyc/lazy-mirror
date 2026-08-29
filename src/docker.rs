@@ -6,29 +6,156 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use crate::config::Scope;
-use crate::{command_version, ToolStatus};
+use crate::{command_exists, command_output, command_version, ToolStatus};
 
 const REGISTRY_MIRRORS: &str = "registry-mirrors";
 const CONFIG_ENV: &str = "LM_DOCKER_DAEMON_CONFIG";
+const BUILDKIT_CONFIG_ENV: &str = "LM_BUILDKIT_CONFIG";
 const CREATED_SUFFIX: &str = ".lazy-mirror.created";
 const CURRENT_SUFFIX: &str = ".lazy-mirror.current";
 
 const MIRRORS: &[(&str, &str)] = &[("daocloud", "https://docker.m.daocloud.io")];
 
 pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
-    if !(mirror.starts_with("http://") || mirror.starts_with("https://"))
-        || mirror.chars().any(char::is_whitespace)
-    {
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!("Docker mirror must be an HTTP(S) URL: {mirror}"),
-        ));
-    }
-    set_at(&config_path(scope)?, mirror)
+    let mirror = validate_mirror(mirror)?;
+    set_at(&config_path(scope)?, &mirror)
 }
 
 pub fn unset(scope: Scope) -> io::Result<()> {
     unset_at(&config_path(scope)?)
+}
+
+pub fn buildkit_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let mirror = validate_mirror(mirror)?;
+    buildkit_set_at(&buildkit_config_path(scope)?, &mirror)
+}
+
+fn buildkit_set_at(path: &Path, mirror: &str) -> io::Result<()> {
+    crate::update_toml(
+        path,
+        |document| {
+            let registry = document
+                .entry("registry")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::InvalidData, "registry must be a TOML table")
+                })?;
+            let docker = registry
+                .entry("docker.io")
+                .or_insert_with(|| toml::Value::Table(toml::Table::new()))
+                .as_table_mut()
+                .ok_or_else(|| {
+                    io::Error::new(
+                        io::ErrorKind::InvalidData,
+                        "registry.docker.io must be a TOML table",
+                    )
+                })?;
+            docker.insert(
+                "mirrors".to_owned(),
+                toml::Value::Array(vec![toml::Value::String(mirror.to_owned())]),
+            );
+            Ok(())
+        },
+        is_buildkit_managed,
+    )
+}
+
+pub fn buildkit_unset(scope: Scope) -> io::Result<()> {
+    buildkit_unset_at(&buildkit_config_path(scope)?)
+}
+
+fn buildkit_unset_at(path: &Path) -> io::Result<()> {
+    if !path.exists()
+        && !crate::backup_path(path).exists()
+        && !crate::created_marker_path(path).exists()
+    {
+        return Ok(());
+    }
+    if !crate::backup_path(path).exists() && !crate::created_marker_path(path).exists() {
+        return Err(io::Error::new(
+            io::ErrorKind::AlreadyExists,
+            format!(
+                "refusing to restore unmanaged BuildKit config {}",
+                path.display()
+            ),
+        ));
+    }
+    crate::remove_toml_with_backup(path, is_buildkit_managed)
+}
+
+pub fn buildkit_status(scope: Scope) -> io::Result<ToolStatus> {
+    let version = buildkit_backend_version()?;
+    let path = buildkit_config_path(scope)?;
+    let source = fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| content.parse::<toml::Table>().ok())
+        .and_then(|document| buildkit_mirror(&document).map(str::to_owned));
+    Ok(ToolStatus::new(
+        version,
+        source.is_some(),
+        source.clone(),
+        Some(path.clone()),
+        format!(
+            "registry.docker.io.mirrors={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
+    ))
+}
+
+pub fn buildkit_available() -> bool {
+    buildkit_backend_version().is_ok()
+}
+
+fn buildkit_backend_version() -> io::Result<String> {
+    let mut versions = Vec::new();
+    if command_exists("buildctl") {
+        versions.push(command_version("buildctl")?);
+    }
+    if command_exists("docker") {
+        if let Ok(version) = command_output("docker", &["buildx", "version"]) {
+            versions.push(version);
+        }
+    }
+    if versions.is_empty() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            "neither buildctl nor docker buildx is installed",
+        ));
+    }
+    Ok(versions.join("; "))
+}
+
+fn validate_mirror(mirror: &str) -> io::Result<String> {
+    let mirror = mirror.trim_end_matches('/');
+    let valid_root = crate::config::is_url(mirror)
+        && mirror
+            .split_once("://")
+            .is_some_and(|(_, authority)| !authority.contains(['/', '?', '#']));
+    if !valid_root {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("Docker mirror must be an HTTP(S) root URL without a path: {mirror}"),
+        ));
+    }
+    Ok(mirror.to_owned())
+}
+
+fn buildkit_mirror(document: &toml::Table) -> Option<&str> {
+    document
+        .get("registry")
+        .and_then(toml::Value::as_table)
+        .and_then(|registry| registry.get("docker.io"))
+        .and_then(toml::Value::as_table)
+        .and_then(|docker| docker.get("mirrors"))
+        .and_then(toml::Value::as_array)
+        .and_then(|mirrors| mirrors.first())
+        .and_then(toml::Value::as_str)
+}
+
+fn is_buildkit_managed(document: &toml::Table) -> bool {
+    buildkit_mirror(document).is_some_and(|mirror| validate_mirror(mirror).is_ok())
 }
 
 pub fn status(scope: Scope) -> io::Result<ToolStatus> {
@@ -355,6 +482,46 @@ fn config_path(scope: Scope) -> io::Result<PathBuf> {
     }
 }
 
+fn buildkit_config_path(scope: Scope) -> io::Result<PathBuf> {
+    if scope == Scope::Project {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Docker BuildKit does not support project scope",
+        ));
+    }
+    if let Some(path) = env::var_os(BUILDKIT_CONFIG_ENV) {
+        if path.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{BUILDKIT_CONFIG_ENV} cannot be empty"),
+            ));
+        }
+        return Ok(PathBuf::from(path));
+    }
+    match scope {
+        Scope::Project => unreachable!(),
+        Scope::User => {
+            let config_home = env::var_os("XDG_CONFIG_HOME")
+                .map(PathBuf::from)
+                .or_else(|| dirs::home_dir().map(|home| home.join(".config")))
+                .ok_or_else(|| {
+                    io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory")
+                })?;
+            Ok(config_home.join("buildkit/buildkitd.toml"))
+        }
+        Scope::System => {
+            #[cfg(windows)]
+            {
+                Ok(PathBuf::from(r"C:\ProgramData\buildkit\buildkitd.toml"))
+            }
+            #[cfg(not(windows))]
+            {
+                Ok(PathBuf::from("/etc/buildkit/buildkitd.toml"))
+            }
+        }
+    }
+}
+
 fn backup_path(path: &Path) -> PathBuf {
     let mut backup = path.as_os_str().to_os_string();
     backup.push(".lazy-mirror.bak");
@@ -424,6 +591,43 @@ mod tests {
         set_at(&path, "https://second.example").unwrap();
         unset_at(&path).unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), r#"{"debug":true}"#);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn buildkit_mirror_is_merged_and_restored() {
+        let path = temp_path("buildkit").with_file_name("buildkitd.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "debug = true\n").unwrap();
+
+        buildkit_set_at(&path, mirror_url("daocloud").unwrap()).unwrap();
+        let document: toml::Table = fs::read_to_string(&path).unwrap().parse().unwrap();
+        assert_eq!(
+            buildkit_mirror(&document),
+            Some(mirror_url("daocloud").unwrap())
+        );
+        buildkit_unset_at(&path).unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "debug = true\n");
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn docker_mirrors_must_be_root_urls() {
+        assert!(validate_mirror("https://mirror.example").is_ok());
+        assert!(validate_mirror("https://mirror.example/").is_ok());
+        assert!(validate_mirror("https://mirror.example/v2").is_err());
+        assert!(validate_mirror("https://mirror.example?token=x").is_err());
+    }
+
+    #[test]
+    fn buildkit_reset_never_removes_unmanaged_config() {
+        let path = temp_path("buildkit-unmanaged").with_file_name("buildkitd.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        let content = "[registry.\"docker.io\"]\nmirrors = [\"https://user.example\"]\n";
+        fs::write(&path, content).unwrap();
+
+        assert!(buildkit_unset_at(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 }

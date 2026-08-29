@@ -177,3 +177,29 @@ fn invalid_parallelism_has_a_configuration_exit_code() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2));
 }
+
+#[test]
+fn catalog_lint_is_machine_readable() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["--no-config", "catalog", "lint", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema"], "lm/v1");
+    assert_eq!(value["valid"], true);
+    assert!(value["targets"].as_u64().unwrap() >= 70);
+}
+
+#[test]
+fn config_sources_reports_disabled_loading() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["--no-config", "config", "sources", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["schema"], "lm/v1");
+    assert_eq!(value["sources"][0]["active"], false);
+    assert_eq!(value["sources"][0]["loaded"], false);
+}

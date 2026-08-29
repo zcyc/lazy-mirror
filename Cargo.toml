@@ -2,6 +2,9 @@
 name = "lm"
 version = "0.1.0"
 edition = "2021"
+description = "A CLI for switching package and developer-tool mirrors"
+license-file = "LICENSE.txt"
+repository = "https://github.com/zcyc/lazy-mirror"
 
 [dependencies]
 clap = { version = "4.1.8", features = ["derive"] }

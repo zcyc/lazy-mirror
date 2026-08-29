@@ -27,9 +27,14 @@ lm diff docker daocloud --format json
 lm set pip --best --verify     # 选择最快可用源并在写入前复核
 lm config validate
 lm config show --format json
+lm config sources               # 查看实际参与合并的配置文件
+lm config sources --format json
 lm config init                 # 创建最小 TOML 配置模板
+lm --no-config list             # 忽略所有 TOML 配置
+lm catalog lint --format json  # 校验内置目标、别名和 mirror
 lm completions zsh > ~/.zfunc/_lm
 lm set docker daocloud
+lm set buildkit daocloud        # 写入 BuildKit registry mirror
 lm set pip first              # 使用内置列表第一个源
 lm set docker https://mirror.example.com
 lm set cargo rsproxy --scope project --dry-run
@@ -41,7 +46,8 @@ eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境�
 `list`、`measure`、`check`、`get` 支持 `--format table|json`；JSON 记录包含
 `schema = "lm/v1"`。`get --all-scopes` 可一次查看各有效作用域的配置。
 `measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
-`--only-installed`、`--parallelism 1..64`。`get`、`plan` 也支持 `--only-installed`。
+`--only-installed`、`--parallelism 1..64`、`--ipv4` 和 `--ipv6`；IP 选项互斥，默认自动选择。
+`get`、`plan` 也支持 `--only-installed`。
 `set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前进行协议探测；两者可同时使用。
 `set all`/`reset all` 默认跳过未安装或当前作用域不支持的目标；需要全量原子执行时使用
 `set all --atomic`，它会对未安装目标直接失败。
@@ -49,9 +55,13 @@ eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境�
 
 ## TOML 配置
 
-默认位置是 `$XDG_CONFIG_HOME/lazy-mirror/config.toml`，macOS 通常是
-`~/Library/Application Support/lazy-mirror/config.toml`；也可以使用 `LM_CONFIG` 或
-`--config FILE` 覆盖。
+未指定 `--config` 且未设置 `LM_CONFIG` 时，按系统 → 用户 → 当前项目的顺序读取配置，后者
+覆盖前者：系统为 `/etc/lazy-mirror/config.toml`（Windows 为
+`C:\ProgramData\lazy-mirror\config.toml`），用户为 `$XDG_CONFIG_HOME/lazy-mirror/config.toml`
+（macOS 通常是 `~/Library/Application Support/lazy-mirror/config.toml`），项目为
+`.lazy-mirror/config.toml`。`LM_CONFIG` 或 `--config FILE` 会改为只读取指定文件；
+`--no-config` 完全跳过读取。`lm config sources` 显示路径、是否启用和是否成功加载。
+`config show --format json` 与 `get --explain` 会标出配置项最终来源文件。
 
 ```toml
 [mirrors]
@@ -89,11 +99,12 @@ mirrors = ["company", "tuna", "https://pypi.example.com/simple"]
 
 ## 检查与安全
 
-`check` 按工具协议探测：Docker 使用 `/v2/`，Python 使用 `/simple/`，NuGet 使用
+`check` 按工具协议探测：Docker/BuildKit 使用 `/v2/`，Python 使用 `/simple/`，NuGet 使用
 `/v3/index.json`，Hugging Face 使用 `/api/models?limit=1`。结果区分
-`healthy`、`auth-required`、`rate-limited`、`unsupported`、`unavailable` 和网络错误；
+`healthy`、`auth-required`、`rate-limited`、`unsupported`、`invalid-response`、`unavailable` 和网络错误；
 一般只有 `healthy` 返回成功，Docker/containerd/Podman 的 `auth-required` 代表 Registry
-已可达，也返回成功。健康结果可以缓存到系统 cache 目录，或用 `LM_CACHE_FILE` 指定。
+已可达，也返回成功。JSON 结果还包含远端 IP、Content-Type、DNS、连接、TLS 和首字节耗时；
+健康结果可以缓存到系统 cache 目录，或用 `LM_CACHE_FILE` 指定。
 
 私有 mirror 的凭证只从环境变量读取，不写入配置或输出：
 
@@ -123,7 +134,10 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN、Rye、nvm、Nix、Guix 使用受管
 shell 环境变量块；`lm env` 可只输出变量而不修改文件，支持 sh、fish、PowerShell。
 项目作用域写入 `.env`，用户作用域默认写入 `.profile`，也可用 `LM_SHELL_PROFILE` 指定。
-Cargo 和 uv 使用 TOML 结构化合并，Docker 使用 JSON 合并。
+Cargo 和 uv 使用 TOML 结构化合并，Docker 和 BuildKit 使用 JSON/TOML 结构化合并。
+
+`lm catalog lint` 不联网，只校验内置目标、全局选择器唯一性、mirror 名称和 URL；建议在 CI
+中运行，避免新增目标或 mirror 时破坏命令解析。
 
 APT 默认写入 `/etc/apt/sources.list.d/lazy-mirror.list`，可用 `LM_APT_SOURCES_FILE`
 覆盖；发行版会从 `/etc/os-release` 的 `VERSION_CODENAME`/`UBUNTU_CODENAME` 推断，
@@ -144,14 +158,42 @@ Termux 要求 `PREFIX` 环境变量，避免在错误目录创建仓库配置。
 
 Docker 默认镜像来自 [DaoCloud public-image-mirror](https://github.com/DaoCloud/public-image-mirror)，
 内置源仅保留 `daocloud`；仍可传任意 HTTP(S) URL 覆盖内置选择。
-Docker、containerd/nerdctl、Podman 会按 `user`/`system` scope 分别写入用户或系统配置。
+Docker、BuildKit（`buildctl`/`docker buildx`）、containerd/nerdctl、Podman 会按
+`user`/`system` scope 分别写入用户或系统配置。
 
 ```bash
 lm list docker
 lm set docker daocloud
 lm set docker https://docker.example.com
 lm reset docker
+
+lm list buildkit
+lm set buildkit daocloud
+lm reset buildkit
 ```
+
+Docker 镜像源必须是 registry 根 URL，例如 `https://docker.example.com`；带路径、查询参数
+的值会被拒绝。Docker Engine 使用 `registry-mirrors`，遵循
+[Docker daemon mirror 配置](https://docs.docker.com/docker-hub/image-library/mirror/)；
+BuildKit 使用以下结构，遵循
+[BuildKit registry mirror 配置](https://docs.docker.com/build/buildkit/configure/)：
+
+```toml
+[registry."docker.io"]
+mirrors = ["https://docker.m.daocloud.io"]
+```
+
+BuildKit 默认写入 `~/.config/buildkit/buildkitd.toml` 或 `/etc/buildkit/buildkitd.toml`，
+可用 `LM_BUILDKIT_CONFIG` 覆盖。`lm get buildkit` 会检查 `buildctl` 或 `docker buildx`；
+使用 Buildx 时，把该文件传给 builder：
+
+```bash
+docker buildx create --use --bootstrap --name lm-builder \
+  --driver docker-container --buildkitd-config ~/.config/buildkit/buildkitd.toml
+```
+
+BuildKit 是独立目标，不包含在 `set all` 中；需要显式执行 `lm set buildkit ...`，避免意外
+改动 daemon 和 BuildKit 两套运行时配置。
 
 默认配置路径遵循 Docker 官方约定：Linux `/etc/docker/daemon.json`，Linux rootless 使用
 `$XDG_CONFIG_HOME/docker/daemon.json` 或 `~/.config/docker/daemon.json`，Docker Desktop
@@ -170,10 +212,15 @@ lm set hf https://hf.example.com --scope project
 
 ## 与 chsrc 的边界
 
-命令形状已对齐 `list/measure/get/set/reset`、镜像名/URL 覆盖、`first`、dry-run、作用域
+命令形状已对齐 [chsrc](https://github.com/RubyMetric/chsrc) 的
+`list/measure/get/set/reset`、镜像名/URL 覆盖、`first`、dry-run、作用域
 和 JSON 自动化输出，并补充 `doctor`、`plan/diff`、`config validate/show`。目标和别名
 覆盖 chsrc 当前公开清单；没有稳定官方 mirror 语义的工具允许自定义 URL，但不会伪造
 内置源。
 
 这是一次破坏性 CLI 重构：旧的 `unset`、`status` 命令，以及
-`lm set docker --mirror NAME` 形式已删除；旧配置不会自动迁移。`doctor` 是新的诊断命令。
+`lm set docker --mirror NAME` 形式已删除；旧配置不会自动迁移。Docker/BuildKit 现在拒绝
+带路径或查询参数的 mirror URL；健康缓存键新增 IP 版本和探测指标，旧缓存会直接失效，
+不做迁移。发布物同时生成 SHA256、SPDX SBOM 和 GitHub provenance attestation，可用
+[`gh attestation verify`](https://docs.github.com/en/actions/how-tos/secure-your-work/use-artifact-attestations/manage-attestations)
+校验。`doctor` 是新的诊断命令。
