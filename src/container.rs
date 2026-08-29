@@ -97,7 +97,8 @@ fn containerd_path(scope: Scope) -> io::Result<PathBuf> {
     match scope {
         Scope::Project => unreachable!(),
         Scope::User => crate::home_file(".config/containerd/certs.d/docker.io/hosts.toml"),
-        Scope::System => Ok(PathBuf::from(
+        Scope::System => Ok(crate::system_file(
+            r"C:\ProgramData\containerd\certs.d\docker.io\hosts.toml",
             "/etc/containerd/certs.d/docker.io/hosts.toml",
         )),
     }
@@ -116,7 +117,10 @@ fn podman_path(scope: Scope) -> io::Result<PathBuf> {
     match scope {
         Scope::Project => unreachable!(),
         Scope::User => crate::home_file(".config/containers/registries.conf"),
-        Scope::System => Ok(PathBuf::from("/etc/containers/registries.conf")),
+        Scope::System => Ok(crate::system_file(
+            r"C:\ProgramData\containers\registries.conf",
+            "/etc/containers/registries.conf",
+        )),
     }
 }
 

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use crate::config::Scope;
 
 pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
+    validate_mirror(mirror)?;
     let path = config_path(scope)?;
     let registry = if mirror.starts_with("sparse+") {
         mirror.to_owned()
@@ -51,6 +52,23 @@ pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
     )
 }
 
+fn validate_mirror(mirror: &str) -> io::Result<()> {
+    let url = mirror.strip_prefix("sparse+").unwrap_or(mirror);
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Cargo mirror must be an HTTP(S) registry URL",
+        ));
+    }
+    if url.contains(['?', '#']) {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "Cargo mirror URL cannot contain a query or fragment",
+        ));
+    }
+    Ok(())
+}
+
 pub fn unset(scope: Scope) -> io::Result<()> {
     crate::remove_toml_with_backup(&config_path(scope)?, is_managed)
 }
@@ -90,7 +108,7 @@ fn config_path(scope: Scope) -> io::Result<PathBuf> {
             "config",
         )),
         Scope::System => Ok(preferred_config_path(
-            std::path::Path::new("/etc/cargo"),
+            &crate::system_file(r"C:\ProgramData\cargo", "/etc/cargo"),
             "config.toml",
             "config",
         )),
@@ -171,5 +189,13 @@ mod tests {
         std::fs::write(&modern, "").unwrap();
         assert_eq!(project_config_path(&nested), modern);
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn cargo_mirror_validation_rejects_non_registry_urls() {
+        assert!(validate_mirror("https://mirror.example/index").is_ok());
+        assert!(validate_mirror("sparse+https://mirror.example/index/").is_ok());
+        assert!(validate_mirror("oci://registry.example.com").is_err());
+        assert!(validate_mirror("https://mirror.example/index?token=secret").is_err());
     }
 }

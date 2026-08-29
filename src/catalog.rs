@@ -299,6 +299,11 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: DOCKER,
     },
     TargetSpec {
+        name: "helm",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
         name: "conda",
         aliases: &["mamba", "anaconda"],
         mirrors: CONDA,
@@ -596,6 +601,7 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
         "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::JsonObject),
         "pip" | "uv" | "pdm" | "poetry" => ("/simple/", ProbeResponse::Any),
         "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
+        "helm" => ("/index.yaml", ProbeResponse::Any),
         "conda" => ("/pkgs/main/repodata.json", ProbeResponse::JsonObject),
         "cran" => ("/src/contrib/PACKAGES", ProbeResponse::Any),
         "huggingface" => ("/api/models?limit=1", ProbeResponse::JsonArray),

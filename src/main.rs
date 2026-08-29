@@ -105,6 +105,8 @@ enum Commands {
         verify: bool,
         #[arg(long)]
         atomic: bool,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
     },
     #[command(about = "Reset to the upstream source", visible_alias = "r")]
     Reset {
@@ -113,6 +115,8 @@ enum Commands {
         scope: Scope,
         #[arg(long, visible_alias = "dry")]
         dry_run: bool,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
     },
     #[command(about = "Validate or show the effective TOML configuration")]
     Config {
@@ -283,6 +287,7 @@ enum Target {
     Containerd,
     Nerdctl,
     Podman,
+    Helm,
     #[value(alias = "anaconda")]
     Conda,
     Mamba,
@@ -392,6 +397,7 @@ const ALL_TARGETS: &[Target] = &[
     Target::Docker,
     Target::Containerd,
     Target::Podman,
+    Target::Helm,
     Target::Conda,
     Target::Dart,
     Target::Flutter,
@@ -500,6 +506,21 @@ struct ExecuteOptions {
     scope: Scope,
     dry_run: bool,
     atomic: bool,
+    format: OutputFormat,
+}
+
+#[derive(Debug)]
+struct ChangeRecord {
+    target: String,
+    action: &'static str,
+    scope: &'static str,
+    before: Option<String>,
+    desired: Option<String>,
+    after: Option<String>,
+    path: Option<String>,
+    changed: bool,
+    dry_run: bool,
+    verified: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -577,6 +598,7 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
             TargetCapabilities::new(false, true, true, true, &["containerd", "nerdctl"])
         }
         Target::Podman => TargetCapabilities::new(false, true, true, true, &["podman"]),
+        Target::Helm => TargetCapabilities::new(false, true, false, false, &["helm"]),
         Target::Conda => TargetCapabilities::new(false, true, false, false, &["conda"]),
         Target::Mamba => TargetCapabilities::new(false, true, false, false, &["mamba"]),
         Target::Dart => TargetCapabilities::new(true, true, true, true, &["dart", "flutter"]),
@@ -678,6 +700,7 @@ fn target_name(target: Target) -> &'static str {
         Target::Containerd => "containerd",
         Target::Nerdctl => "nerdctl",
         Target::Podman => "podman",
+        Target::Helm => "helm",
         Target::Conda => "conda",
         Target::Mamba => "mamba",
         Target::Dart => "dart",
@@ -780,7 +803,7 @@ fn run_action(
             action,
             mirror,
             scope,
-            &[Target::Npm, Target::Pnpm, Target::Yarn],
+            &[Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun],
         ),
         Target::Go => match action {
             Action::Set => lm::go::set(mirror.unwrap()),
@@ -861,6 +884,10 @@ fn run_action(
         Target::Podman => match action {
             Action::Set => lm::container::podman_set(mirror.unwrap(), scope),
             Action::Reset => lm::container::podman_unset(scope),
+        },
+        Target::Helm => match action {
+            Action::Set => lm::helm::set(mirror.unwrap(), scope),
+            Action::Reset => lm::helm::unset(scope),
         },
         Target::Conda | Target::Mamba => {
             let name = target_name(target);
@@ -1146,12 +1173,16 @@ fn verification_targets(target: Target) -> Vec<Target> {
     }
 }
 
+fn installed_targets(target: Target, scope: Scope) -> Vec<Target> {
+    verification_targets(target)
+        .into_iter()
+        .filter(|target| validate_scope(*target, scope).is_ok() && is_installed(*target))
+        .collect()
+}
+
 fn snapshot_targets(target: Target, config: &Config, scope: Scope) -> io::Result<Snapshot> {
     let mut snapshot = Vec::new();
-    for target in verification_targets(target) {
-        if validate_scope(target, scope).is_err() || !is_installed(target) {
-            continue;
-        }
+    for target in installed_targets(target, scope) {
         let status = inspect(target, config, scope)?;
         if status.configured && status.source.is_none() {
             return Err(io::Error::new(
@@ -1174,6 +1205,134 @@ fn snapshot_targets(target: Target, config: &Config, scope: Scope) -> io::Result
         ));
     }
     Ok(snapshot)
+}
+
+fn current_sources(target: Target, config: &Config, scope: Scope) -> io::Result<Snapshot> {
+    installed_targets(target, scope)
+        .into_iter()
+        .map(|target| Ok((target, inspect(target, config, scope)?.source)))
+        .collect()
+}
+
+fn change_records(
+    target: Target,
+    action: Action,
+    mirror: Option<&str>,
+    before: &Snapshot,
+    options: ExecuteOptions,
+    config: &Config,
+) -> io::Result<Vec<ChangeRecord>> {
+    let mut records = installed_targets(target, options.scope)
+        .into_iter()
+        .map(|target| {
+            let before = before
+                .iter()
+                .find(|(current, _)| *current == target)
+                .and_then(|(_, source)| source.clone());
+            let (after, path) = if options.dry_run {
+                (before.clone(), None)
+            } else {
+                inspect(target, config, options.scope)
+                    .map(|status| (status.source, status.path))
+                    .unwrap_or((None, None))
+            };
+            Ok(ChangeRecord {
+                target: target_name(target).to_owned(),
+                action: match action {
+                    Action::Set => "set",
+                    Action::Reset => "reset",
+                },
+                scope: scope_name(options.scope),
+                changed: match action {
+                    Action::Set => !same_source(before.as_deref(), mirror),
+                    Action::Reset => before.is_some(),
+                },
+                before,
+                desired: mirror.map(str::to_owned),
+                after,
+                path: path.map(|path| path.display().to_string()),
+                dry_run: options.dry_run,
+                verified: options.verify && action == Action::Set,
+            })
+        })
+        .collect::<io::Result<Vec<_>>>()?;
+    if records.is_empty() && options.dry_run {
+        records.push(ChangeRecord {
+            target: target_name(target).to_owned(),
+            action: match action {
+                Action::Set => "set",
+                Action::Reset => "reset",
+            },
+            scope: scope_name(options.scope),
+            before: None,
+            desired: mirror.map(str::to_owned),
+            after: None,
+            path: None,
+            changed: true,
+            dry_run: true,
+            verified: false,
+        });
+    }
+    Ok(records)
+}
+
+fn print_change_records(records: &[ChangeRecord]) -> io::Result<()> {
+    let output = records
+        .iter()
+        .map(|record| {
+            serde_json::json!({
+                "schema": lm::JSON_SCHEMA,
+                "target": record.target,
+                "action": record.action,
+                "scope": record.scope,
+                "before": record.before.as_deref().map(redact_url),
+                "desired": record.desired.as_deref().map(redact_url),
+                "after": record.after.as_deref().map(redact_url),
+                "path": record.path,
+                "changed": record.changed,
+                "dry_run": record.dry_run,
+                "verified": record.verified,
+            })
+        })
+        .collect::<Vec<_>>();
+    print_json(&serde_json::Value::Array(output))
+}
+
+fn same_source(left: Option<&str>, right: Option<&str>) -> bool {
+    left.zip(right)
+        .is_some_and(|(left, right)| left.trim_end_matches('/') == right.trim_end_matches('/'))
+        || left.is_none() && right.is_none()
+}
+
+fn print_table_change(
+    action: &str,
+    target: &str,
+    mirror: Option<&str>,
+    scope: &str,
+    dry_run: bool,
+    verified: bool,
+) {
+    let suffix = if dry_run {
+        ""
+    } else if verified {
+        "; verified"
+    } else {
+        ""
+    };
+    match action {
+        "set" => println!(
+            "{} {} mirror to {}{} (scope={scope})",
+            if dry_run { "would set" } else { "set" },
+            target,
+            redact_url(mirror.unwrap_or_default()),
+            suffix
+        ),
+        _ => println!(
+            "{} {} mirror (scope={scope})",
+            if dry_run { "would reset" } else { "reset" },
+            target
+        ),
+    }
 }
 
 fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<RollbackMode> {
@@ -1216,7 +1375,14 @@ fn source_matches(target: Target, status: &lm::ToolStatus, expected: &str) -> bo
     }
     if matches!(
         target,
-        Target::Docker | Target::Buildkit | Target::Containerd | Target::Nerdctl | Target::Podman
+        Target::Docker
+            | Target::Buildkit
+            | Target::Containerd
+            | Target::Nerdctl
+            | Target::Podman
+            | Target::Helm
+            | Target::Nuget
+            | Target::Dotnet
     ) {
         return status
             .source
@@ -1228,10 +1394,7 @@ fn source_matches(target: Target, status: &lm::ToolStatus, expected: &str) -> bo
 
 fn verify_applied(target: Target, mirror: &str, scope: Scope) -> io::Result<()> {
     let mut checked = false;
-    for target in verification_targets(target) {
-        if validate_scope(target, scope).is_err() || !is_installed(target) {
-            continue;
-        }
+    for target in installed_targets(target, scope) {
         checked = true;
         let status = inspect_with_expected(target, mirror, scope)?;
         if !source_matches(target, &status, mirror) {
@@ -1282,6 +1445,15 @@ fn execute(
     } else {
         Vec::new()
     };
+    let before = if options.format == OutputFormat::Json {
+        if previous.is_empty() {
+            current_sources(target, config, options.scope)?
+        } else {
+            previous.clone()
+        }
+    } else {
+        Vec::new()
+    };
     let result = execute_resolved(
         target,
         action,
@@ -1291,7 +1463,26 @@ fn execute(
         options.verify,
     );
     let result = match result {
-        Ok(()) => Ok(()),
+        Ok(()) => {
+            if options.format == OutputFormat::Json {
+                let records =
+                    change_records(target, action, mirror.as_deref(), &before, options, config)?;
+                print_change_records(&records)
+            } else {
+                print_table_change(
+                    match action {
+                        Action::Set => "set",
+                        Action::Reset => "reset",
+                    },
+                    target_name(target),
+                    mirror.as_deref(),
+                    scope_name(options.scope),
+                    options.dry_run,
+                    options.verify && action == Action::Set,
+                );
+                Ok(())
+            }
+        }
         Err(error) if !previous.is_empty() && !options.dry_run => {
             let mode = rollback_mode(&[&previous]);
             match restore_snapshots(&[&previous], options.scope) {
@@ -1322,36 +1513,11 @@ fn execute_resolved(
     verify: bool,
 ) -> io::Result<()> {
     if dry_run {
-        match action {
-            Action::Set => println!(
-                "would set {} mirror to {} (scope={scope:?})",
-                target_name(target),
-                redact_url(mirror.unwrap_or_default())
-            ),
-            Action::Reset => println!(
-                "would reset {} mirror (scope={scope:?})",
-                target_name(target)
-            ),
-        }
         return Ok(());
     }
     run_action(target, action, mirror, scope)?;
     if verify && action == Action::Set {
         verify_applied(target, mirror.unwrap_or_default(), scope)?;
-    }
-    let verb = match action {
-        Action::Set => "set",
-        Action::Reset => "reset",
-    };
-    if action == Action::Set {
-        println!(
-            "{verb} {} mirror to {}{}",
-            target_name(target),
-            redact_url(mirror.unwrap_or_default()),
-            if verify { "; verified" } else { "" }
-        );
-    } else {
-        println!("{verb} {} mirror", target_name(target));
     }
     Ok(())
 }
@@ -1450,10 +1616,20 @@ fn execute_all(
         } else {
             Vec::new()
         };
-        plan.push((target, mirror, previous));
+        let before = if options.format == OutputFormat::Json {
+            if previous.is_empty() {
+                current_sources(target, config, options.scope)?
+            } else {
+                previous.clone()
+            }
+        } else {
+            Vec::new()
+        };
+        plan.push((target, mirror, previous, before));
     }
     let mut applied: Vec<(Target, Snapshot)> = Vec::new();
-    for (target, mirror, previous) in plan {
+    let mut records = Vec::new();
+    for (target, mirror, previous, before) in plan {
         if let Err(error) = execute_resolved(
             target,
             action,
@@ -1481,9 +1657,34 @@ fn execute_all(
         if (options.atomic || options.verify) && !options.dry_run {
             applied.push((target, previous));
         }
+        if options.format == OutputFormat::Json {
+            records.extend(change_records(
+                target,
+                action,
+                mirror.as_deref(),
+                &before,
+                options,
+                config,
+            )?);
+        } else {
+            print_table_change(
+                match action {
+                    Action::Set => "set",
+                    Action::Reset => "reset",
+                },
+                target_name(target),
+                mirror.as_deref(),
+                scope_name(options.scope),
+                options.dry_run,
+                options.verify && action == Action::Set,
+            );
+        }
     }
     if let Some(cache) = cache {
         cache.save()?;
+    }
+    if options.format == OutputFormat::Json {
+        print_change_records(&records)?;
     }
     Ok(())
 }
@@ -1542,6 +1743,7 @@ fn inspect_with_expected(
             lm::container::containerd_status(target_name(target), scope)
         }
         Target::Podman => lm::container::podman_status(scope),
+        Target::Helm => lm::helm::status(scope),
         Target::Conda | Target::Mamba => lm::conda::status(target_name(target), expected),
         Target::Dart => lm::dart::dart_status(expected, scope),
         Target::Flutter => lm::dart::flutter_status(expected, scope),
@@ -1609,17 +1811,24 @@ fn inspect_with_expected(
 
 fn status_record(target: Target, config: &Config, scope: Scope) -> StatusRecord {
     match inspect(target, config, scope) {
-        Ok(status) => StatusRecord {
-            target: target_name(target).to_owned(),
-            scope: format!("{scope:?}").to_lowercase(),
-            configured: status.configured,
-            version: Some(status.version),
-            source: status.source.map(|source| redact_text(&source)),
-            path: status.path.map(|path| path.display().to_string()),
-            origin: format!("{scope:?}").to_lowercase(),
-            detail: Some(redact_text(&status.detail)),
-            error: None,
-        },
+        Ok(status) => {
+            let origin = status
+                .path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_else(|| "external command".to_owned());
+            StatusRecord {
+                target: target_name(target).to_owned(),
+                scope: format!("{scope:?}").to_lowercase(),
+                configured: status.configured,
+                version: Some(status.version),
+                source: status.source.map(|source| redact_text(&source)),
+                path: status.path.map(|path| path.display().to_string()),
+                origin,
+                detail: Some(redact_text(&status.detail)),
+                error: None,
+            }
+        }
         Err(error) => StatusRecord {
             target: target_name(target).to_owned(),
             scope: format!("{scope:?}").to_lowercase(),
@@ -1627,7 +1836,7 @@ fn status_record(target: Target, config: &Config, scope: Scope) -> StatusRecord 
             version: None,
             source: None,
             path: None,
-            origin: format!("{scope:?}").to_lowercase(),
+            origin: "unavailable".to_owned(),
             detail: None,
             error: Some(error.to_string()),
         },
@@ -2175,6 +2384,7 @@ fn target_category(target: &str) -> &'static str {
             | "buildkit"
             | "containerd"
             | "podman"
+            | "helm"
             | "winget"
             | "opam"
             | "cocoapods"
@@ -2831,6 +3041,7 @@ fn run() -> io::Result<()> {
             dry_run,
             verify,
             atomic,
+            format,
         } => {
             if target == Target::All {
                 execute_all(
@@ -2842,6 +3053,7 @@ fn run() -> io::Result<()> {
                         scope,
                         dry_run,
                         atomic,
+                        format,
                     },
                     &config,
                 )
@@ -2862,6 +3074,7 @@ fn run() -> io::Result<()> {
                         scope,
                         dry_run,
                         atomic: false,
+                        format,
                     },
                     &config,
                 )
@@ -2871,6 +3084,7 @@ fn run() -> io::Result<()> {
             target,
             scope,
             dry_run,
+            format,
         } => {
             if target == Target::All {
                 execute_all(
@@ -2882,6 +3096,7 @@ fn run() -> io::Result<()> {
                         scope,
                         dry_run,
                         atomic: false,
+                        format,
                     },
                     &config,
                 )
@@ -2896,6 +3111,7 @@ fn run() -> io::Result<()> {
                         scope,
                         dry_run,
                         atomic: false,
+                        format,
                     },
                     &config,
                 )
@@ -2978,6 +3194,8 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "buildkit", "daocloud", "--dry"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "pip", "--best", "--verify"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "pip", "tuna", "--format", "json"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "reset", "pip", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "pip", "--all-scopes"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "config", "init"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "completions", "bash"]).is_ok());
@@ -2990,6 +3208,7 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "catalog", "lint", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "--no-config", "list"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "env", "huggingface", "hf-mirror"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "list", "helm"]).is_ok());
     }
 
     #[test]
@@ -3048,6 +3267,10 @@ mod tests {
             &["npm", "pnpm", "yarn", "bun"]
         );
         assert_eq!(
+            verification_targets(Target::Node),
+            vec![Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun]
+        );
+        assert_eq!(
             target_capabilities(Target::Java).commands,
             &["mvn", "gradle", "sbt"]
         );
@@ -3082,6 +3305,27 @@ mod tests {
         assert!(npm.supports(Scope::Project));
         assert!(!npm.supports(Scope::System));
         assert!(!npm.atomic);
+    }
+
+    #[test]
+    fn post_write_verification_compares_source_only_for_unaware_adapters() {
+        let status = lm::ToolStatus::new(
+            "helm version".to_owned(),
+            true,
+            Some("https://charts.example.com/".to_owned()),
+            None,
+            "",
+        );
+        assert!(source_matches(
+            Target::Helm,
+            &status,
+            "https://charts.example.com"
+        ));
+        assert!(!source_matches(
+            Target::Helm,
+            &status,
+            "https://other.example.com"
+        ));
     }
 
     #[test]

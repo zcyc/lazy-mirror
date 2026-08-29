@@ -25,6 +25,8 @@ lm doctor all --only-installed --explain  # 检查工具、配置和 mirror，�
 lm plan docker daocloud         # 显示将要修改的路径和目标值
 lm diff docker daocloud --format json
 lm set pip --best --verify     # 选择最快可用源并在写入前复核
+lm set pip tuna --format json # 输出可供脚本消费的变更结果
+lm reset pip --format json
 lm config validate
 lm config show --format json
 lm config sources               # 查看实际参与合并的配置文件
@@ -35,6 +37,7 @@ lm catalog lint --format json  # 校验内置目标、别名和 mirror
 lm completions zsh > ~/.zfunc/_lm
 lm set docker daocloud
 lm set buildkit daocloud        # 写入 BuildKit registry mirror
+lm set helm https://charts.example.com # 管理用户级 Helm chart repository
 lm set pip first              # 使用内置列表第一个源
 lm set docker https://mirror.example.com
 lm set cargo rsproxy --scope project --dry-run
@@ -43,8 +46,9 @@ lm reset docker
 eval "$(lm env huggingface hf-mirror)"  # 输出当前 shell 可执行的环境变量
 ```
 
-`list`、`measure`、`check`、`get` 支持 `--format table|json`；JSON 记录包含
-`schema = "lm/v1"`。`get --all-scopes` 可一次查看各有效作用域的配置。
+`list`、`measure`、`check`、`get`、`set`、`reset` 支持 `--format table|json`；JSON 记录包含
+`schema = "lm/v1"`。`set/reset --format json` 返回 `before`、`desired`、`after`、`path`、
+`changed`、`dry_run` 和 `verified`；`get --all-scopes` 可一次查看各有效作用域的配置。
 `measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
 `--only-installed`、`--parallelism 1..64`、`--ipv4` 和 `--ipv6`；IP 选项互斥，默认自动选择。
 `get`、`plan` 也支持 `--only-installed`。
@@ -131,16 +135,21 @@ LM_MIRROR_USERNAME=... LM_MIRROR_PASSWORD=... lm check docker https://registry.e
 | 其他语言 | Go、Cargo/Rust、Rustup、RubyGems/Bundler、Composer/PHP、Conda/Mamba、CRAN/R、NuGet/.NET、Dart、Flutter、Hugging Face、Hex/Mix、Julia、CPAN/Perl、opam、Rye、nvm、LuaRocks、Clojure/Clojars、Haskell/Hackage/Cabal/Stack、OCaml |
 | 系统/平台 | APT/Debian/Ubuntu、Alpine APK、Fedora、OpenSUSE、Kali、Arch、Manjaro、Gentoo、Rocky、Alma、Void、Solus、ROS、Raspberry Pi、Armbian、OpenWrt、openEuler、OpenAnolis、OpenKylin、Deepin、Linux Mint、MSYS2、Termux、FreeBSD、OpenBSD、NetBSD |
 | 软件/桌面 | Homebrew、WinGet、CocoaPods、Flathub/Flatpak、Nix、Guix、Emacs/ELPA、TeX/CTAN |
-| 容器 | Docker Engine、containerd/nerdctl、Podman |
+| 容器/云原生 | Docker Engine、containerd/nerdctl、Podman、Helm |
 
 Dart、Flutter、Hugging Face、Homebrew、Rustup、Julia、CPAN、Rye、nvm、Nix、Guix 使用受管
 shell 环境变量块；`lm env` 可只输出变量而不修改文件，支持 sh、fish、PowerShell。
 项目作用域写入 `.env`，用户作用域默认写入 `.profile`，也可用 `LM_SHELL_PROFILE` 指定。
-Cargo 和 uv 使用 TOML 结构化合并，项目 scope 会分别识别最近父目录的 `.cargo/config.toml`/`.cargo/config`
-和 `uv.toml`/`pyproject.toml`（同目录的 `uv.toml` 优先）；Docker 和 BuildKit 使用 JSON/TOML 结构化合并。
+Cargo 和 uv 使用 TOML 结构化合并；项目 scope 会识别最近父目录的
+`.cargo/config.toml`/`.cargo/config`。uv workspace 会从 workspace root 读取
+`uv.toml` 或 `pyproject.toml`，并保留已有多个 index。Docker 和 BuildKit 使用 JSON/TOML
+结构化合并。
 
 `lm catalog lint` 不联网，只校验内置目标、全局选择器唯一性、mirror 名称和 URL；建议在 CI
 中运行，避免新增目标或 mirror 时破坏命令解析。
+
+Cargo 使用 source replacement，因此 mirror 必须与 crates.io 内容等价；私有 registry 不应
+直接当作 Cargo mirror 使用，应使用 Cargo 自己的 registry 配置。
 
 APT 默认写入 `/etc/apt/sources.list.d/lazy-mirror.list`，可用 `LM_APT_SOURCES_FILE`
 覆盖；发行版会从 `/etc/os-release` 的 `VERSION_CODENAME`/`UBUNTU_CODENAME` 推断，
@@ -197,6 +206,10 @@ docker buildx create --use --bootstrap --name lm-builder \
 
 BuildKit 是独立目标，不包含在 `set all` 中；需要显式执行 `lm set buildkit ...`，避免意外
 改动 daemon 和 BuildKit 两套运行时配置。
+
+Helm 管理用户级的 `lazy-mirror` chart repository；它不会重写已有仓库，也不伪造 OCI
+全局 mirror。OCI chart 必须在命令中使用 `oci://` 地址；需要切换 Helm repository 配置时，
+可用 `LM_HELM_REPOSITORY_CONFIG` 指定 `repositories.yaml`。
 
 默认配置路径遵循 Docker 官方约定：Linux `/etc/docker/daemon.json`，Linux rootless 使用
 `$XDG_CONFIG_HOME/docker/daemon.json` 或 `~/.config/docker/daemon.json`，Docker Desktop

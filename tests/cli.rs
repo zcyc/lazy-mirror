@@ -14,6 +14,40 @@ fn list_json_is_machine_readable() {
 }
 
 #[test]
+fn helm_is_a_custom_chart_repository_target() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["list", "helm", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["target"], "helm");
+    assert_eq!(value["mirrors"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn mutation_json_is_machine_readable_in_dry_run_mode() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args([
+            "--no-config",
+            "set",
+            "helm",
+            "https://charts.example.com",
+            "--dry-run",
+            "--format",
+            "json",
+        ])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value[0]["schema"], "lm/v1");
+    assert_eq!(value[0]["target"], "helm");
+    assert_eq!(value[0]["changed"], true);
+    assert_eq!(value[0]["dry_run"], true);
+}
+
+#[test]
 fn invalid_config_has_a_configuration_exit_code() {
     let path = std::env::temp_dir().join(format!(
         "lm-cli-invalid-{}-{}.toml",

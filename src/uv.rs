@@ -8,30 +8,37 @@ pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
     let url = mirror.trim_end_matches('/').to_owned() + "/";
     crate::update_toml(
         &path,
-        |document| {
-            let document = uv_document_mut(document, &path)?;
-            let indexes = document
-                .entry("index")
-                .or_insert_with(|| toml::Value::Array(Vec::new()))
-                .as_array_mut()
-                .ok_or_else(|| {
-                    io::Error::new(io::ErrorKind::InvalidData, "uv index must be an array")
-                })?;
-            indexes.retain(|value| {
-                value.get("name").and_then(toml::Value::as_str) != Some("lazy-mirror")
-            });
-            let mut index = toml::Table::new();
-            index.insert(
-                "name".to_owned(),
-                toml::Value::String("lazy-mirror".to_owned()),
-            );
-            index.insert("url".to_owned(), toml::Value::String(url));
-            index.insert("default".to_owned(), toml::Value::Boolean(true));
-            indexes.push(toml::Value::Table(index));
-            Ok(())
-        },
+        |document| set_index(document, &path, &url),
         |document| is_managed(document, &path),
     )
+}
+
+fn set_index(document: &mut toml::Table, path: &std::path::Path, url: &str) -> io::Result<()> {
+    let document = uv_document_mut(document, path)?;
+    let indexes = document
+        .entry("index")
+        .or_insert_with(|| toml::Value::Array(Vec::new()))
+        .as_array_mut()
+        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "uv index must be an array"))?;
+    indexes.retain(|value| value.get("name").and_then(toml::Value::as_str) != Some("lazy-mirror"));
+    for index in indexes.iter_mut().filter_map(toml::Value::as_table_mut) {
+        if index
+            .get("default")
+            .and_then(toml::Value::as_bool)
+            .unwrap_or(false)
+        {
+            index.insert("default".to_owned(), toml::Value::Boolean(false));
+        }
+    }
+    let mut index = toml::Table::new();
+    index.insert(
+        "name".to_owned(),
+        toml::Value::String("lazy-mirror".to_owned()),
+    );
+    index.insert("url".to_owned(), toml::Value::String(url.to_owned()));
+    index.insert("default".to_owned(), toml::Value::Boolean(true));
+    indexes.push(toml::Value::Table(index));
+    Ok(())
 }
 
 pub fn unset(scope: Scope) -> io::Result<()> {
@@ -69,12 +76,16 @@ fn config_path(scope: Scope) -> io::Result<PathBuf> {
             Ok(project_config_path(&current))
         }
         Scope::User => crate::home_file(".config/uv/uv.toml"),
-        Scope::System => Ok(PathBuf::from("/etc/uv/uv.toml")),
+        Scope::System => Ok(crate::system_file(
+            r"C:\ProgramData\uv\uv.toml",
+            "/etc/uv/uv.toml",
+        )),
     }
 }
 
 fn project_config_path(start: &std::path::Path) -> PathBuf {
-    let mut directory = start;
+    let root = workspace_root(start).unwrap_or_else(|| start.to_owned());
+    let mut directory = root.as_path();
     loop {
         let uv = directory.join("uv.toml");
         if uv.is_file() {
@@ -84,9 +95,28 @@ fn project_config_path(start: &std::path::Path) -> PathBuf {
         if has_uv_table(&path) {
             return path;
         }
-        let Some(parent) = directory.parent() else {
-            return start.join("uv.toml");
+        let Some(parent) = directory.parent().filter(|parent| *parent != root) else {
+            return root.join("uv.toml");
         };
+        directory = parent;
+    }
+}
+
+fn workspace_root(start: &std::path::Path) -> Option<PathBuf> {
+    let mut directory = start;
+    loop {
+        let path = directory.join("pyproject.toml");
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(document) = content.parse::<toml::Table>() {
+                let is_workspace = uv_document(&document, &path)
+                    .and_then(|document| document.get("workspace"))
+                    .is_some_and(toml::Value::is_table);
+                if is_workspace {
+                    return Some(directory.to_owned());
+                }
+            }
+        }
+        let parent = directory.parent()?;
         directory = parent;
     }
 }
@@ -243,5 +273,56 @@ mod tests {
             Some("https://example.com/simple/")
         );
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_config_starts_at_the_workspace_root() {
+        let root = std::env::temp_dir().join(format!(
+            "lm-uv-workspace-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let member = root.join("packages/example");
+        std::fs::create_dir_all(&member).unwrap();
+        std::fs::write(
+            root.join("pyproject.toml"),
+            "[tool.uv.workspace]\nmembers = [\"packages/*\"]\n[tool.uv]\n",
+        )
+        .unwrap();
+        std::fs::write(member.join("uv.toml"), "[[index]]\n").unwrap();
+        assert_eq!(project_config_path(&member), root.join("pyproject.toml"));
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn setting_uv_mirror_preserves_named_indexes_and_replaces_default() {
+        let mut document = r#"
+            [[index]]
+            name = "pytorch"
+            url = "https://download.pytorch.org/whl/cpu"
+            explicit = true
+
+            [[index]]
+            name = "public"
+            url = "https://pypi.org/simple"
+            default = true
+        "#
+        .parse::<toml::Table>()
+        .unwrap();
+        set_index(
+            &mut document,
+            std::path::Path::new("uv.toml"),
+            "https://mirror.example/simple/",
+        )
+        .unwrap();
+        let indexes = document["index"].as_array().unwrap();
+        assert_eq!(indexes.len(), 3);
+        assert_eq!(indexes[0]["name"].as_str(), Some("pytorch"));
+        assert_eq!(indexes[1]["default"].as_bool(), Some(false));
+        assert_eq!(indexes[2]["name"].as_str(), Some("lazy-mirror"));
+        assert_eq!(indexes[2]["default"].as_bool(), Some(true));
     }
 }

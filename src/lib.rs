@@ -12,6 +12,7 @@ pub mod container;
 pub mod dart;
 pub mod docker;
 pub mod go;
+pub mod helm;
 pub mod huggingface;
 pub mod java;
 pub mod node;
@@ -31,11 +32,14 @@ pub mod uv;
 pub const JSON_SCHEMA: &str = "lm/v1";
 
 pub(crate) fn run(program: &str, args: &[&str]) -> io::Result<()> {
-    let status = Command::new(program).args(args).status()?;
-    if status.success() {
+    let output = Command::new(program).args(args).output()?;
+    if output.status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(format!("{program} exited with {status}")))
+        Err(io::Error::other(format!(
+            "{program} exited with {}",
+            output.status
+        )))
     }
 }
 
@@ -250,6 +254,19 @@ pub(crate) fn nearest_existing_file(start: &Path, names: &[&str]) -> Option<Path
             }
         }
         directory = directory.parent()?;
+    }
+}
+
+pub(crate) fn system_file(windows: &str, unix: &str) -> PathBuf {
+    #[cfg(windows)]
+    {
+        let _ = unix;
+        PathBuf::from(windows)
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = windows;
+        PathBuf::from(unix)
     }
 }
 
