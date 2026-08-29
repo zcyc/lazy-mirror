@@ -440,7 +440,10 @@ fn validate_selection(
     } else {
         Err(io::Error::new(
             io::ErrorKind::InvalidData,
-            format!("unknown mirror {selection} for target {target}"),
+            format!(
+                "unknown mirror {} for target {target}",
+                redact_selection(selection)
+            ),
         ))
     }
 }
@@ -874,6 +877,28 @@ mod tests {
         fs::write(&path, "[defaults]\npip = \"missing\"\n").unwrap();
         let error = Config::load(Some(&path)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn invalid_config_selection_errors_do_not_leak_url_secrets() {
+        let path = env::temp_dir().join(format!(
+            "lm-config-secret-{}-{}.toml",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::write(
+            &path,
+            "[defaults]\npip = \"https://user:secret@example.com/index?token=secret\"\n",
+        )
+        .unwrap();
+        let error = Config::load(Some(&path)).unwrap_err().to_string();
+        assert!(!error.contains("user:secret"));
+        assert!(!error.contains("token=secret"));
+        assert!(error.contains("https://example.com/index"));
         fs::remove_file(path).unwrap();
     }
 
