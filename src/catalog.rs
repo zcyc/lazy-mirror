@@ -151,6 +151,36 @@ const HUGGINGFACE: &[MirrorSpec] = &[MirrorSpec {
     name: "hf-mirror",
     url: "https://hf-mirror.com",
 }];
+const APT: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/debian",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/debian",
+    },
+];
+const APK: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/alpine",
+}];
+const HOMEBREW: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn",
+}];
+const RUSTUP: &[MirrorSpec] = &[MirrorSpec {
+    name: "rsproxy",
+    url: "https://rsproxy.cn",
+}];
+const JULIA: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/julia",
+}];
+const CPAN: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/CPAN",
+}];
 const EMPTY: &[MirrorSpec] = &[];
 
 const TARGETS: &[TargetSpec] = &[
@@ -181,7 +211,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "pip",
-        aliases: &["pip3", "python"],
+        aliases: &["pip3", "python", "py", "pypi"],
         mirrors: PYPI,
     },
     TargetSpec {
@@ -211,12 +241,12 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "bundle",
-        aliases: &[],
+        aliases: &["bundler"],
         mirrors: RUBYGEMS,
     },
     TargetSpec {
         name: "maven",
-        aliases: &["java"],
+        aliases: &["java", "mvn", "maven-daemon", "mvnd"],
         mirrors: JAVA,
     },
     TargetSpec {
@@ -231,12 +261,12 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "cargo",
-        aliases: &["rust"],
+        aliases: &["rust", "crate"],
         mirrors: CARGO,
     },
     TargetSpec {
         name: "docker",
-        aliases: &[],
+        aliases: &["dockerhub"],
         mirrors: DOCKER,
     },
     TargetSpec {
@@ -275,6 +305,51 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: HUGGINGFACE,
     },
     TargetSpec {
+        name: "apt",
+        aliases: &["debian", "ubuntu"],
+        mirrors: APT,
+    },
+    TargetSpec {
+        name: "apk",
+        aliases: &["alpine"],
+        mirrors: APK,
+    },
+    TargetSpec {
+        name: "brew",
+        aliases: &["homebrew"],
+        mirrors: HOMEBREW,
+    },
+    TargetSpec {
+        name: "rustup",
+        aliases: &[],
+        mirrors: RUSTUP,
+    },
+    TargetSpec {
+        name: "hex",
+        aliases: &["mix"],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "julia",
+        aliases: &[],
+        mirrors: JULIA,
+    },
+    TargetSpec {
+        name: "cpan",
+        aliases: &["perl"],
+        mirrors: CPAN,
+    },
+    TargetSpec {
+        name: "winget",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
+        name: "opam",
+        aliases: &[],
+        mirrors: EMPTY,
+    },
+    TargetSpec {
         name: "nuget",
         aliases: &["dotnet"],
         mirrors: EMPTY,
@@ -306,6 +381,17 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
             |mirror| Ok(mirror.url.to_owned()),
         );
     };
+    if selection == "first" {
+        return spec.mirrors.first().map_or_else(
+            || {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{target} has no built-in mirror"),
+                ))
+            },
+            |mirror| Ok(mirror.url.to_owned()),
+        );
+    }
     if is_url(selection) {
         return Ok(selection.to_owned());
     }
@@ -367,6 +453,10 @@ mod tests {
         assert_eq!(
             resolve("huggingface", Some("hf-mirror"), &config).unwrap(),
             "https://hf-mirror.com"
+        );
+        assert_eq!(
+            resolve("docker", Some("first"), &config).unwrap(),
+            "https://docker.m.daocloud.io"
         );
         fs::remove_file(path).unwrap();
     }

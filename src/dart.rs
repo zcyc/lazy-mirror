@@ -32,12 +32,17 @@ pub fn unset(scope: Scope) -> io::Result<()> {
 pub fn dart_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("dart")?;
     let path = profile_path(scope)?;
-    let configured = std::fs::read_to_string(&path)
-        .map(|content| content.contains(expected))
-        .unwrap_or(false);
+    let source = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| env_value(&content, "PUB_HOSTED_URL"));
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("PUB_HOSTED_URL; profile={}", path.display()),
+        detail: format!(
+            "source={}; profile={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
     })
 }
@@ -45,13 +50,25 @@ pub fn dart_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus
 pub fn flutter_status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("flutter")?;
     let path = profile_path(scope)?;
-    let configured = std::fs::read_to_string(&path)
-        .map(|content| content.contains(expected))
-        .unwrap_or(false);
+    let source = std::fs::read_to_string(&path)
+        .ok()
+        .and_then(|content| env_value(&content, "FLUTTER_STORAGE_BASE_URL"));
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("FLUTTER_STORAGE_BASE_URL; profile={}", path.display()),
+        detail: format!(
+            "source={}; profile={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
+    })
+}
+
+fn env_value(content: &str, variable: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        let value = line.split_once(&format!("{variable}=\""))?.1;
+        value.split_once('"').map(|(value, _)| value.to_owned())
     })
 }
 

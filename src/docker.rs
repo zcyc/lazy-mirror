@@ -55,8 +55,9 @@ pub fn status() -> io::Result<ToolStatus> {
                 (
                     configured,
                     format!(
-                        "registry-mirrors={}; path={}",
+                        "registry-mirrors={}; source={}; path={}",
                         names.join(","),
+                        mirrors.join(","),
                         path.display()
                     ),
                 )
@@ -71,6 +72,13 @@ pub fn status() -> io::Result<ToolStatus> {
 }
 
 fn set_at(path: &Path, url: &str) -> io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = crate::lock(path)?;
     let backup = backup_path(path);
     let created = created_marker_path(path);
     let had_file = path.exists();
@@ -113,7 +121,10 @@ fn set_at(path: &Path, url: &str) -> io::Result<()> {
                 ),
             ));
         }
-        if let Some(parent) = path.parent() {
+        if let Some(parent) = path
+            .parent()
+            .filter(|parent| !parent.as_os_str().is_empty())
+        {
             fs::create_dir_all(parent)?;
         }
         fs::write(&created, [])?;
@@ -137,10 +148,10 @@ fn set_at(path: &Path, url: &str) -> io::Result<()> {
         }
         return Err(error);
     }
-    if let Err(error) = fs::write(current_marker_path(path), url) {
+    if let Err(error) = crate::atomic_write(&current_marker_path(path), url) {
         if had_file {
             if backup.exists() {
-                let _ = fs::copy(&backup, path);
+                let _ = restore_file(&backup, path);
                 let _ = fs::remove_file(&backup);
             }
         } else {
@@ -153,6 +164,7 @@ fn set_at(path: &Path, url: &str) -> io::Result<()> {
 }
 
 fn unset_at(path: &Path) -> io::Result<()> {
+    let _lock = crate::lock(path)?;
     let Some(config) = read_config(path)? else {
         return Ok(());
     };
@@ -168,7 +180,7 @@ fn unset_at(path: &Path) -> io::Result<()> {
 
     let backup = backup_path(path);
     if backup.exists() {
-        fs::copy(&backup, path)?;
+        restore_file(&backup, path)?;
         fs::remove_file(backup)?;
     } else {
         fs::remove_file(path)?;
@@ -182,7 +194,12 @@ fn write_config(path: &Path, config: &Value) -> io::Result<()> {
     let content = serde_json::to_string_pretty(config)
         .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?
         + "\n";
-    fs::write(path, content)
+    crate::atomic_write(path, &content)
+}
+
+fn restore_file(backup: &Path, path: &Path) -> io::Result<()> {
+    let content = fs::read_to_string(backup)?;
+    crate::atomic_write(path, &content)
 }
 
 fn read_config(path: &Path) -> io::Result<Option<Value>> {

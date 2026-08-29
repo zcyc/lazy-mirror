@@ -24,12 +24,21 @@ pub fn containerd_unset() -> io::Result<()> {
 pub fn containerd_status(command: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version(command)?;
     let path = containerd_path()?;
-    let configured = std::fs::read_to_string(&path)
-        .map(|content| content.starts_with(CONTAINERD_PREFIX))
-        .unwrap_or(false);
+    let content = std::fs::read_to_string(&path).ok();
+    let configured = content
+        .as_deref()
+        .is_some_and(|content| content.starts_with(CONTAINERD_PREFIX));
+    let source = content
+        .as_deref()
+        .and_then(|content| content.strip_prefix(CONTAINERD_PREFIX))
+        .and_then(|content| content.split_once("\"]").map(|(mirror, _)| mirror));
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or("not configured"),
+            path.display()
+        ),
         version,
     })
 }
@@ -52,12 +61,26 @@ pub fn podman_unset() -> io::Result<()> {
 pub fn podman_status() -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("podman")?;
     let path = podman_path()?;
-    let configured = std::fs::read_to_string(&path)
-        .map(|content| content.starts_with(PODMAN_PREFIX))
-        .unwrap_or(false);
+    let content = std::fs::read_to_string(&path).ok();
+    let configured = content
+        .as_deref()
+        .is_some_and(|content| content.starts_with(PODMAN_PREFIX));
+    let source = content
+        .as_deref()
+        .and_then(|content| content.strip_prefix(PODMAN_PREFIX))
+        .and_then(|content| {
+            content
+                .strip_prefix("mirror = \"")?
+                .split_once('"')
+                .map(|(mirror, _)| mirror)
+        });
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or("not configured"),
+            path.display()
+        ),
         version,
     })
 }

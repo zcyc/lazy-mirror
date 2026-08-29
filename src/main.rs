@@ -2,6 +2,7 @@ use std::collections::BTreeSet;
 use std::io;
 use std::path::PathBuf;
 use std::process;
+use std::thread;
 
 use clap::{Parser, Subcommand, ValueEnum};
 
@@ -19,21 +20,48 @@ struct Cli {
 #[derive(Debug, Subcommand)]
 enum Commands {
     #[command(about = "List targets and mirror sources", visible_aliases = ["ls", "l"])]
-    List { query: Option<String> },
+    List {
+        query: Option<String>,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
     #[command(about = "Measure mirror availability and latency", visible_aliases = ["m", "cesu"])]
     Measure {
         target: Target,
         mirror: Option<String>,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+        #[arg(long)]
+        cache_ttl: Option<u64>,
+        #[arg(long)]
+        no_cache: bool,
+    },
+    #[command(about = "Check mirror protocol endpoints", visible_alias = "verify")]
+    Check {
+        target: Target,
+        mirror: Option<String>,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+        #[arg(long)]
+        cache_ttl: Option<u64>,
+        #[arg(long)]
+        no_cache: bool,
     },
     #[command(about = "Show the current source", visible_alias = "g")]
-    Get { target: Target },
+    Get {
+        target: Target,
+        #[arg(long, value_enum, default_value = "user")]
+        scope: Scope,
+        #[arg(long, value_enum, default_value = "table")]
+        format: OutputFormat,
+    },
     #[command(about = "Set a source, mirror name, or URL", visible_alias = "s")]
     Set {
         target: Target,
         mirror: Option<String>,
         #[arg(long, value_enum, default_value = "user")]
         scope: Scope,
-        #[arg(long)]
+        #[arg(long, visible_alias = "dry")]
         dry_run: bool,
     },
     #[command(about = "Reset to the upstream source", visible_alias = "r")]
@@ -41,9 +69,16 @@ enum Commands {
         target: Target,
         #[arg(long, value_enum, default_value = "user")]
         scope: Scope,
-        #[arg(long)]
+        #[arg(long, visible_alias = "dry")]
         dry_run: bool,
     },
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+#[value(rename_all = "lower")]
+enum OutputFormat {
+    Table,
+    Json,
 }
 
 #[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
@@ -54,8 +89,10 @@ enum Target {
     Pnpm,
     Yarn,
     Bun,
+    #[value(alias = "nodejs")]
     Node,
     Go,
+    #[value(alias = "py", alias = "pypi")]
     Pip,
     Pip3,
     Python,
@@ -64,21 +101,28 @@ enum Target {
     Poetry,
     Composer,
     Php,
+    #[value(alias = "rb", alias = "rubygems")]
     Gem,
+    #[value(alias = "bundler")]
     Bundle,
     Ruby,
+    #[value(alias = "mvn", alias = "maven-daemon", alias = "mvnd")]
     Maven,
     Gradle,
     Sbt,
     Java,
+    #[value(alias = "crate")]
     Cargo,
     Rust,
+    #[value(alias = "dockerhub")]
     Docker,
     Containerd,
     Nerdctl,
     Podman,
+    #[value(alias = "anaconda")]
     Conda,
     Mamba,
+    #[value(alias = "pub")]
     Dart,
     Flutter,
     Nuget,
@@ -87,6 +131,20 @@ enum Target {
     R,
     #[value(alias = "hf", alias = "huggingface-hub")]
     Huggingface,
+    #[value(alias = "debian", alias = "ubuntu")]
+    Apt,
+    #[value(alias = "alpine")]
+    Apk,
+    #[value(alias = "homebrew")]
+    Brew,
+    Rustup,
+    #[value(alias = "mix")]
+    Hex,
+    Julia,
+    #[value(alias = "perl")]
+    Cpan,
+    Winget,
+    Opam,
 }
 
 const ALL_TARGETS: &[Target] = &[
@@ -95,7 +153,7 @@ const ALL_TARGETS: &[Target] = &[
     Target::Yarn,
     Target::Bun,
     Target::Go,
-    Target::Pip3,
+    Target::Pip,
     Target::Uv,
     Target::Pdm,
     Target::Poetry,
@@ -114,12 +172,47 @@ const ALL_TARGETS: &[Target] = &[
     Target::Flutter,
     Target::Cran,
     Target::Huggingface,
+    Target::Nuget,
+    Target::Apt,
+    Target::Apk,
+    Target::Brew,
+    Target::Rustup,
+    Target::Hex,
+    Target::Julia,
+    Target::Cpan,
+    Target::Winget,
+    Target::Opam,
 ];
 
 #[derive(Clone, Copy)]
 enum Action {
     Set,
     Reset,
+}
+
+#[derive(Debug)]
+struct StatusRecord {
+    target: String,
+    scope: String,
+    configured: bool,
+    version: Option<String>,
+    source: Option<String>,
+    detail: Option<String>,
+    error: Option<String>,
+}
+
+#[derive(Debug)]
+struct MeasureRecord {
+    target: String,
+    mirror: String,
+    url: String,
+    probe_url: Option<String>,
+    code: Option<String>,
+    state: String,
+    detail: Option<String>,
+    milliseconds: Option<u128>,
+    cached: bool,
+    error: Option<String>,
 }
 
 fn target_name(target: Target) -> &'static str {
@@ -161,6 +254,15 @@ fn target_name(target: Target) -> &'static str {
         Target::Cran => "cran",
         Target::R => "r",
         Target::Huggingface => "huggingface",
+        Target::Apt => "apt",
+        Target::Apk => "apk",
+        Target::Brew => "brew",
+        Target::Rustup => "rustup",
+        Target::Hex => "hex",
+        Target::Julia => "julia",
+        Target::Cpan => "cpan",
+        Target::Winget => "winget",
+        Target::Opam => "opam",
     }
 }
 
@@ -289,6 +391,42 @@ fn run_action(
             Action::Set => lm::huggingface::set(mirror.unwrap(), scope),
             Action::Reset => lm::huggingface::unset(scope),
         },
+        Target::Apt => match action {
+            Action::Set => lm::platform::apt_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::apt_unset(scope),
+        },
+        Target::Apk => match action {
+            Action::Set => lm::platform::apk_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::apk_unset(scope),
+        },
+        Target::Brew => match action {
+            Action::Set => lm::platform::brew_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::brew_unset(scope),
+        },
+        Target::Rustup => match action {
+            Action::Set => lm::platform::rustup_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::rustup_unset(scope),
+        },
+        Target::Hex => match action {
+            Action::Set => lm::platform::hex_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::hex_unset(scope),
+        },
+        Target::Julia => match action {
+            Action::Set => lm::platform::julia_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::julia_unset(scope),
+        },
+        Target::Cpan => match action {
+            Action::Set => lm::platform::cpan_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::cpan_unset(scope),
+        },
+        Target::Winget => match action {
+            Action::Set => lm::platform::winget_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::winget_unset(scope),
+        },
+        Target::Opam => match action {
+            Action::Set => lm::platform::opam_set(mirror.unwrap(), scope),
+            Action::Reset => lm::platform::opam_unset(scope),
+        },
         Target::All => unreachable!(),
     }
 }
@@ -310,12 +448,22 @@ fn execute(
         )?),
         Action::Reset => None,
     };
+    execute_resolved(target, action, mirror.as_deref(), scope, dry_run)
+}
+
+fn execute_resolved(
+    target: Target,
+    action: Action,
+    mirror: Option<&str>,
+    scope: Scope,
+    dry_run: bool,
+) -> io::Result<()> {
     if dry_run {
         match action {
             Action::Set => println!(
                 "would set {} mirror to {} (scope={scope:?})",
                 target_name(target),
-                mirror.as_deref().unwrap_or_default()
+                redact_url(mirror.unwrap_or_default())
             ),
             Action::Reset => println!(
                 "would reset {} mirror (scope={scope:?})",
@@ -324,7 +472,7 @@ fn execute(
         }
         return Ok(());
     }
-    run_action(target, action, mirror.as_deref(), scope)?;
+    run_action(target, action, mirror, scope)?;
     let verb = match action {
         Action::Set => "set",
         Action::Reset => "reset",
@@ -335,7 +483,7 @@ fn execute(
 
 fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
     let supported = match scope {
-        Scope::User => true,
+        Scope::User => !matches!(target, Target::Apt | Target::Apk),
         Scope::Project => matches!(
             target,
             Target::Npm
@@ -352,6 +500,12 @@ fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
                 | Target::Huggingface
                 | Target::Nuget
                 | Target::Dotnet
+                | Target::Brew
+                | Target::Rustup
+                | Target::Julia
+                | Target::Cpan
+                | Target::Winget
+                | Target::Opam
         ),
         Scope::System => matches!(
             target,
@@ -361,6 +515,12 @@ fn validate_scope(target: Target, scope: Scope) -> io::Result<()> {
                 | Target::Flutter
                 | Target::Huggingface
                 | Target::Docker
+                | Target::Apt
+                | Target::Apk
+                | Target::Brew
+                | Target::Rustup
+                | Target::Julia
+                | Target::Cpan
         ),
     };
     if supported {
@@ -380,22 +540,48 @@ fn execute_all(
     dry_run: bool,
     config: &Config,
 ) -> io::Result<()> {
-    let mut failed = 0;
+    let mut plan = Vec::new();
     for &target in ALL_TARGETS {
-        if let Err(error) = execute(target, action, selector, scope, dry_run, config) {
-            failed += 1;
-            eprintln!("{}: {error}", target_name(target));
+        if !config.enabled(catalog_name(target)) {
+            continue;
         }
+        if let Err(error) = validate_scope(target, scope) {
+            eprintln!("{}: skipped; {error}", target_name(target));
+            continue;
+        }
+        let mirror = match action {
+            Action::Set => match lm::catalog::resolve(catalog_name(target), selector, config) {
+                Ok(mirror) => Some(mirror),
+                Err(_error)
+                    if selector.is_none()
+                        && lm::catalog::builtin_mirrors(catalog_name(target))?.is_empty() =>
+                {
+                    eprintln!(
+                        "{}: skipped; configure a default or pass a URL",
+                        target_name(target)
+                    );
+                    continue;
+                }
+                Err(error) => return Err(error),
+            },
+            Action::Reset => None,
+        };
+        plan.push((target, mirror));
     }
-    if failed == 0 {
-        Ok(())
-    } else {
-        Err(io::Error::other(format!("{failed} target(s) failed")))
+    for (target, mirror) in plan {
+        execute_resolved(target, action, mirror.as_deref(), scope, dry_run)?;
     }
+    Ok(())
 }
 
 fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::ToolStatus> {
-    let expected = lm::catalog::resolve(catalog_name(target), None, config).unwrap_or_default();
+    let name = catalog_name(target);
+    let expected =
+        if lm::catalog::builtin_mirrors(name)?.is_empty() && config.default_for(name).is_none() {
+            String::new()
+        } else {
+            lm::catalog::resolve(name, None, config)?
+        };
     match target {
         Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun | Target::Node => {
             let name = if target == Target::Node {
@@ -431,54 +617,117 @@ fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::Tool
         Target::Nuget | Target::Dotnet => lm::nuget::status(scope),
         Target::Cran | Target::R => lm::r::status(&expected),
         Target::Huggingface => lm::huggingface::status(&expected, scope),
+        Target::Apt => lm::platform::apt_status(scope),
+        Target::Apk => lm::platform::apk_status(scope),
+        Target::Brew => lm::platform::brew_status(scope),
+        Target::Rustup => lm::platform::rustup_status(scope),
+        Target::Hex => lm::platform::hex_status(scope),
+        Target::Julia => lm::platform::julia_status(scope),
+        Target::Cpan => lm::platform::cpan_status(scope),
+        Target::Winget => lm::platform::winget_status(scope),
+        Target::Opam => lm::platform::opam_status(scope),
         Target::All => unreachable!(),
     }
 }
 
-fn print_status(target: Target, config: &Config, scope: Scope) -> bool {
+fn status_record(target: Target, config: &Config, scope: Scope) -> StatusRecord {
     match inspect(target, config, scope) {
-        Ok(status) => {
-            let state = if status.configured {
-                "configured"
-            } else {
-                "not configured"
-            };
-            println!(
-                "{}: {state}; {}; {}",
-                target_name(target),
-                status.version,
-                status.detail
-            );
-            status.configured
-        }
-        Err(error) => {
-            eprintln!("{}: unavailable; {error}", target_name(target));
-            false
-        }
+        Ok(status) => StatusRecord {
+            target: target_name(target).to_owned(),
+            scope: format!("{scope:?}").to_lowercase(),
+            configured: status.configured,
+            version: Some(status.version),
+            source: source_from_detail(&status.detail),
+            detail: Some(redact_text(&status.detail)),
+            error: None,
+        },
+        Err(error) => StatusRecord {
+            target: target_name(target).to_owned(),
+            scope: format!("{scope:?}").to_lowercase(),
+            configured: false,
+            version: None,
+            source: None,
+            detail: None,
+            error: Some(error.to_string()),
+        },
     }
 }
 
-fn list(query: Option<&str>, config: &Config) -> io::Result<()> {
+fn get(target: Target, config: &Config, scope: Scope, format: OutputFormat) -> io::Result<()> {
+    let targets: &[Target] = if target == Target::All {
+        ALL_TARGETS
+    } else {
+        std::slice::from_ref(&target)
+    };
+    let records: Vec<_> = targets
+        .iter()
+        .copied()
+        .filter(|target| config.enabled(catalog_name(*target)))
+        .filter(|target| validate_scope(*target, scope).is_ok())
+        .map(|target| status_record(target, config, scope))
+        .collect();
+    if format == OutputFormat::Json {
+        print_json(&serde_json::Value::Array(
+            records.iter().map(status_json).collect(),
+        ))?;
+    } else {
+        for record in &records {
+            if let Some(error) = &record.error {
+                eprintln!("{}: unavailable; {error}", record.target);
+            } else {
+                let state = if record.configured {
+                    "configured"
+                } else {
+                    "not configured"
+                };
+                println!(
+                    "{}: {state}; {}; {}",
+                    record.target,
+                    record.version.as_deref().unwrap_or_default(),
+                    record.detail.as_deref().unwrap_or_default()
+                );
+            }
+        }
+    }
+    if records
+        .iter()
+        .all(|record| record.configured && record.error.is_none())
+    {
+        Ok(())
+    } else {
+        Err(io::Error::other(
+            "one or more targets are unavailable or unconfigured",
+        ))
+    }
+}
+
+fn list(query: Option<&str>, config: &Config, format: OutputFormat) -> io::Result<()> {
+    if format == OutputFormat::Json {
+        return list_json(query, config);
+    }
     println!("config: {}", config.path.display());
     if matches!(query, Some("mirror")) {
-        let mut names = BTreeSet::new();
+        let mut mirrors = BTreeSet::new();
         for target in lm::catalog::targets() {
             for mirror in target.mirrors {
-                names.insert(mirror.name);
+                mirrors.insert(mirror.name);
             }
         }
         for (name, _) in config.custom_mirrors() {
-            names.insert(name);
+            mirrors.insert(name);
         }
-        for name in names {
+        for name in mirrors {
             println!("{name}");
         }
         return Ok(());
     }
-    if matches!(query, Some("target" | "os" | "lang" | "ware")) || query.is_none() {
+    if query.is_none() || matches!(query, Some("target" | "os" | "lang" | "ware")) {
+        let category = query.unwrap_or("target");
         let mut names = BTreeSet::new();
         for target in lm::catalog::targets() {
-            names.insert(target.name);
+            if category == "target" || target_category(target.name) == category {
+                names.insert(target.name);
+            }
         }
         for name in names {
             println!("{name}");
@@ -494,88 +743,371 @@ fn list(query: Option<&str>, config: &Config) -> io::Result<()> {
     })?;
     println!("target: {}", spec.name);
     for mirror in spec.mirrors {
-        println!("{}\t{}", mirror.name, mirror.url);
+        println!("{}\t{}", mirror.name, redact_url(mirror.url));
     }
     for (name, url) in config.custom_mirrors() {
-        println!("{name}\t{url} (config)");
+        println!("{}\t{} (config)", name, redact_url(url));
     }
     Ok(())
 }
 
-fn measure_one(target: &str, selector: Option<&str>, config: &Config) -> io::Result<bool> {
-    let specs = lm::catalog::builtin_mirrors(target)?;
-    let candidates = if let Some(selector) = selector {
-        vec![(
-            selector.to_owned(),
-            lm::catalog::resolve(target, Some(selector), config)?,
-        )]
-    } else if specs.is_empty() {
-        vec![(
-            "configured".to_owned(),
-            lm::catalog::resolve(target, None, config)?,
-        )]
-    } else {
-        specs
-            .iter()
-            .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
-            .collect()
-    };
-    let mut all_available = true;
-    for (name, url) in candidates {
-        let probe_url = url.split_once(',').map_or(url.as_str(), |(url, _)| url);
-        match lm::probe::probe(probe_url) {
-            Ok(result) => {
-                let available = result.code != "404" && !result.code.starts_with('5');
-                all_available &= available;
-                println!("{name}\t{url}\t{}\t{}ms", result.code, result.milliseconds);
-            }
-            Err(error) => {
-                all_available = false;
-                println!("{name}\t{url}\tfailed\t{error}");
+fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
+    let output = if matches!(query, Some("mirror")) {
+        let mut mirrors = BTreeSet::new();
+        for target in lm::catalog::targets() {
+            for mirror in target.mirrors {
+                mirrors.insert((mirror.name.to_owned(), mirror.url.to_owned()));
             }
         }
-    }
-    Ok(all_available)
+        for (name, url) in config.custom_mirrors() {
+            mirrors.insert((name.to_owned(), url.to_owned()));
+        }
+        serde_json::json!({
+            "config": config.path,
+            "mirrors": mirrors.into_iter().map(|(name, url)| serde_json::json!({"name": name, "url": redact_url(&url)})).collect::<Vec<_>>()
+        })
+    } else if let Some(query) =
+        query.filter(|query| !matches!(*query, "target" | "os" | "lang" | "ware"))
+    {
+        let spec = lm::catalog::find(query).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unsupported target: {query}"),
+            )
+        })?;
+        serde_json::json!({
+            "config": config.path,
+            "target": spec.name,
+            "aliases": spec.aliases,
+            "mirrors": spec.mirrors.iter().map(|mirror| serde_json::json!({"name": mirror.name, "url": redact_url(mirror.url)})).collect::<Vec<_>>(),
+            "custom_mirrors": config.custom_mirrors().map(|(name, url)| serde_json::json!({"name": name, "url": redact_url(url)})).collect::<Vec<_>>()
+        })
+    } else {
+        let category = query.unwrap_or("target");
+        serde_json::json!({
+            "config": config.path,
+            "targets": lm::catalog::targets().iter().filter(|target| category == "target" || target_category(target.name) == category).map(|target| serde_json::json!({"name": target.name, "category": target_category(target.name), "aliases": target.aliases, "mirrors": target.mirrors.len(), "enabled": config.enabled(target.name)})).collect::<Vec<_>>()
+        })
+    };
+    print_json(&output)
 }
 
-fn measure(target: Target, selector: Option<&str>, config: &Config) -> io::Result<()> {
-    let mut all_available = true;
-    if target == Target::All {
-        for &target in ALL_TARGETS {
-            all_available &= measure_one(catalog_name(target), selector, config)?;
-        }
+fn target_category(target: &str) -> &'static str {
+    if matches!(target, "apt" | "apk") {
+        "os"
+    } else if matches!(
+        target,
+        "brew" | "docker" | "containerd" | "podman" | "winget" | "opam"
+    ) {
+        "ware"
     } else {
-        all_available = measure_one(catalog_name(target), selector, config)?;
+        "lang"
     }
-    if all_available {
+}
+
+fn measure(
+    target: Target,
+    selector: Option<&str>,
+    config: &Config,
+    format: OutputFormat,
+    cache_ttl: Option<u64>,
+    no_cache: bool,
+) -> io::Result<()> {
+    let targets: &[Target] = if target == Target::All {
+        ALL_TARGETS
+    } else {
+        std::slice::from_ref(&target)
+    };
+    let ttl = if no_cache {
+        0
+    } else {
+        cache_ttl.unwrap_or(config.settings().cache_ttl_seconds)
+    };
+    let mut cache = lm::probe::HealthCache::load(ttl)?;
+    let mut records = Vec::new();
+    for &target in targets {
+        if !config.enabled(catalog_name(target)) {
+            continue;
+        }
+        records.extend(measure_one(target, selector, config, &mut cache)?);
+    }
+    cache.save()?;
+    if format == OutputFormat::Json {
+        print_json(&serde_json::Value::Array(
+            records.iter().map(measure_json).collect(),
+        ))?;
+    } else {
+        for record in &records {
+            if let Some(error) = &record.error {
+                println!(
+                    "{}\t{}\t{}\tfailed\t{}",
+                    record.target,
+                    record.mirror,
+                    redact_url(&record.url),
+                    error
+                );
+            } else {
+                println!(
+                    "{}\t{}\t{}\t{}\t{}\t{}ms{}",
+                    record.target,
+                    record.mirror,
+                    redact_url(&record.url),
+                    record.code.as_deref().unwrap_or_default(),
+                    record.state,
+                    record.milliseconds.unwrap_or_default(),
+                    if record.cached { "\tcached" } else { "" }
+                );
+            }
+        }
+    }
+    if records.iter().all(probe_is_usable) {
         Ok(())
     } else {
         Err(io::Error::other("one or more mirrors are unavailable"))
     }
 }
 
+fn probe_is_usable(record: &MeasureRecord) -> bool {
+    record.state == "healthy"
+        || (record.state == "auth-required"
+            && matches!(record.target.as_str(), "docker" | "containerd" | "podman"))
+}
+
+fn measure_one(
+    target: Target,
+    selector: Option<&str>,
+    config: &Config,
+    cache: &mut lm::probe::HealthCache,
+) -> io::Result<Vec<MeasureRecord>> {
+    let name = catalog_name(target);
+    let specs = lm::catalog::builtin_mirrors(name)?;
+    let candidates = if let Some(selector) = selector {
+        vec![(
+            selector.to_owned(),
+            lm::catalog::resolve(name, Some(selector), config)?,
+        )]
+    } else if specs.is_empty() {
+        match lm::catalog::resolve(name, None, config) {
+            Ok(url) => vec![("configured".to_owned(), url)],
+            Err(error) => {
+                return Ok(vec![MeasureRecord {
+                    target: name.to_owned(),
+                    mirror: "configured".to_owned(),
+                    url: String::new(),
+                    probe_url: None,
+                    code: None,
+                    state: "unavailable".to_owned(),
+                    detail: None,
+                    milliseconds: None,
+                    cached: false,
+                    error: Some(error.to_string()),
+                }])
+            }
+        }
+    } else {
+        specs
+            .iter()
+            .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
+            .collect()
+    };
+    let settings = config.settings();
+    let mut records: Vec<Option<MeasureRecord>> = (0..candidates.len()).map(|_| None).collect();
+    let mut pending = Vec::new();
+    for (index, (mirror, url)) in candidates.iter().enumerate() {
+        if let Some(result) = cache.get(name, url) {
+            records[index] = Some(MeasureRecord {
+                target: name.to_owned(),
+                mirror: mirror.clone(),
+                url: url.clone(),
+                probe_url: Some(result.probe_url.clone()),
+                code: Some(result.code.clone()),
+                state: result.state.clone(),
+                detail: Some(result.detail.clone()),
+                milliseconds: Some(result.milliseconds),
+                cached: true,
+                error: None,
+            });
+        } else {
+            pending.push(index);
+        }
+    }
+    for chunk in pending.chunks(settings.parallelism.max(1)) {
+        let results = thread::scope(|scope| {
+            chunk
+                .iter()
+                .map(|&index| {
+                    let url = candidates[index].1.clone();
+                    scope.spawn(move || {
+                        lm::probe::probe_target(
+                            name,
+                            &url,
+                            settings.timeout_seconds,
+                            settings.retries,
+                        )
+                    })
+                })
+                .collect::<Vec<_>>()
+                .into_iter()
+                .map(|handle| {
+                    handle
+                        .join()
+                        .unwrap_or_else(|_| Err(io::Error::other("probe thread panicked")))
+                })
+                .collect::<Vec<_>>()
+        });
+        for (&index, result) in chunk.iter().zip(results) {
+            let (mirror, url) = &candidates[index];
+            match result {
+                Ok(result) => {
+                    cache.put(name, url, result.clone());
+                    records[index] = Some(MeasureRecord {
+                        target: name.to_owned(),
+                        mirror: mirror.clone(),
+                        url: url.clone(),
+                        probe_url: Some(result.probe_url),
+                        code: Some(result.code),
+                        state: result.state,
+                        detail: Some(result.detail),
+                        milliseconds: Some(result.milliseconds),
+                        cached: false,
+                        error: None,
+                    });
+                }
+                Err(error) => {
+                    records[index] = Some(MeasureRecord {
+                        target: name.to_owned(),
+                        mirror: mirror.clone(),
+                        url: url.clone(),
+                        probe_url: None,
+                        code: None,
+                        state: "error".to_owned(),
+                        detail: None,
+                        milliseconds: None,
+                        cached: false,
+                        error: Some(error.to_string()),
+                    });
+                }
+            }
+        }
+    }
+    Ok(records.into_iter().flatten().collect())
+}
+
+fn source_from_detail(detail: &str) -> Option<String> {
+    for marker in [
+        "registry=",
+        "GOPROXY=",
+        "global.index-url=",
+        "pypi.url=",
+        "mirror_url=",
+        "source=",
+        "HOMEBREW_BOTTLE_DOMAIN=",
+        "RUSTUP_DIST_SERVER=",
+        "JULIA_PKG_SERVER=",
+        "PERL_CPAN_MIRROR=",
+    ] {
+        if let Some(value) = detail.split_once(marker).map(|(_, value)| value) {
+            let value = value.split(';').next().unwrap_or(value).trim();
+            if !value.is_empty() && value != "not configured" {
+                return Some(redact_url(value));
+            }
+        }
+    }
+    None
+}
+
+fn redact_url(value: &str) -> String {
+    let Some(scheme) = value.find("://") else {
+        return value.to_owned();
+    };
+    let authority_start = scheme + 3;
+    let authority_end = value[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(value.len(), |offset| authority_start + offset);
+    let authority = &value[authority_start..authority_end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let suffix = &value[authority_end..];
+    let suffix = suffix
+        .find(['?', '#'])
+        .map_or(suffix, |offset| &suffix[..offset]);
+    format!("{}://{}{}", &value[..scheme], authority, suffix)
+}
+
+fn redact_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(redact_url)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn status_json(record: &StatusRecord) -> serde_json::Value {
+    serde_json::json!({
+        "target": record.target.clone(),
+        "scope": record.scope.clone(),
+        "configured": record.configured,
+        "version": record.version.clone(),
+        "source": record.source.clone(),
+        "detail": record.detail.clone(),
+        "error": record.error.clone(),
+    })
+}
+
+fn measure_json(record: &MeasureRecord) -> serde_json::Value {
+    serde_json::json!({
+        "target": record.target.clone(),
+        "mirror": record.mirror.clone(),
+        "url": redact_url(&record.url),
+        "probe_url": record.probe_url.as_deref().map(redact_url),
+        "code": record.code.clone(),
+        "state": record.state.clone(),
+        "detail": record.detail.clone(),
+        "milliseconds": record.milliseconds,
+        "cached": record.cached,
+        "error": record.error.clone(),
+    })
+}
+
+fn print_json(value: &serde_json::Value) -> io::Result<()> {
+    let output = serde_json::to_string_pretty(value)
+        .map_err(|error| io::Error::new(io::ErrorKind::InvalidData, error))?;
+    println!("{output}");
+    Ok(())
+}
+
 fn run() -> io::Result<()> {
     let cli = Cli::parse();
     let config = Config::load(cli.config.as_deref())?;
     match cli.command {
-        Commands::List { query } => list(query.as_deref(), &config),
-        Commands::Measure { target, mirror } => measure(target, mirror.as_deref(), &config),
-        Commands::Get { target } => {
-            let targets: &[Target] = if target == Target::All {
-                ALL_TARGETS
-            } else {
-                std::slice::from_ref(&target)
-            };
-            let mut healthy = true;
-            for &target in targets {
-                healthy &= print_status(target, &config, Scope::User);
-            }
-            if healthy {
-                Ok(())
-            } else {
-                Err(io::Error::other("one or more targets are unavailable"))
-            }
+        Commands::List { query, format } => list(query.as_deref(), &config, format),
+        Commands::Measure {
+            target,
+            mirror,
+            format,
+            cache_ttl,
+            no_cache,
         }
+        | Commands::Check {
+            target,
+            mirror,
+            format,
+            cache_ttl,
+            no_cache,
+        } => measure(
+            target,
+            mirror.as_deref(),
+            &config,
+            format,
+            cache_ttl,
+            no_cache,
+        ),
+        Commands::Get {
+            target,
+            scope,
+            format,
+        } => get(target, &config, scope, format),
         Commands::Set {
             target,
             mirror,
@@ -612,7 +1144,12 @@ fn run() -> io::Result<()> {
 fn main() {
     if let Err(error) = run() {
         eprintln!("error: {error}");
-        process::exit(1);
+        process::exit(match error.kind() {
+            io::ErrorKind::InvalidInput | io::ErrorKind::InvalidData => 2,
+            io::ErrorKind::PermissionDenied => 77,
+            io::ErrorKind::NotFound => 127,
+            _ => 1,
+        });
     }
 }
 
@@ -621,17 +1158,36 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cli_matches_chsrc_shaped_commands() {
-        assert!(Cli::try_parse_from(["lm", "list", "docker"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "ls", "docker"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "measure", "docker"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "m", "docker"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "get", "go"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "g", "go"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry-run"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "set", "huggingface", "hf-mirror"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "s", "docker", "daocloud"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "reset", "docker"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "r", "docker"]).is_ok());
+    fn cli_supports_checks_json_and_new_platforms() {
+        assert!(Cli::try_parse_from(["lm", "check", "docker", "--format", "json"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "list", "apt", "--format", "json"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "rustup", "rsproxy"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "get", "huggingface", "--scope", "project"]).is_ok());
+    }
+
+    #[test]
+    fn urls_are_redacted_before_output() {
+        assert_eq!(
+            redact_url("https://user:secret@example.com/a?token=x"),
+            "https://example.com/a"
+        );
+    }
+
+    #[test]
+    fn docker_auth_challenge_is_a_reachable_registry() {
+        let record = MeasureRecord {
+            target: "docker".to_owned(),
+            mirror: "daocloud".to_owned(),
+            url: "https://docker.example".to_owned(),
+            probe_url: None,
+            code: Some("401".to_owned()),
+            state: "auth-required".to_owned(),
+            detail: None,
+            milliseconds: None,
+            cached: false,
+            error: None,
+        };
+        assert!(probe_is_usable(&record));
     }
 }

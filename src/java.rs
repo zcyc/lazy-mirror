@@ -60,10 +60,15 @@ pub fn gradle_unset() -> io::Result<()> {
 pub fn maven_status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("mvn")?;
     let path = crate::home_file(".m2/settings.xml")?;
-    let configured = file_contains(&path, expected)?;
+    let source = file_value(&path, "<url>", "</url>")?;
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
     })
 }
@@ -71,10 +76,15 @@ pub fn maven_status(expected: &str) -> io::Result<crate::ToolStatus> {
 pub fn gradle_status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("gradle")?;
     let path = gradle_config_path()?;
-    let configured = file_contains(&path, expected)?;
+    let source = file_value(&path, "url '", "'")?;
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
     })
 }
@@ -87,10 +97,13 @@ fn gradle_config_path() -> io::Result<PathBuf> {
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "cannot determine home directory"))
 }
 
-fn file_contains(path: &std::path::Path, value: &str) -> io::Result<bool> {
-    match fs::read_to_string(path) {
-        Ok(content) => Ok(content.contains(value)),
-        Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(false),
-        Err(error) => Err(error),
-    }
+fn file_value(path: &std::path::Path, start: &str, end: &str) -> io::Result<Option<String>> {
+    let Some(content) = fs::read_to_string(path).ok() else {
+        return Ok(None);
+    };
+    Ok(content.split_once(start).and_then(|(_, value)| {
+        value
+            .split_once(end)
+            .map(|(value, _)| value.trim().to_owned())
+    }))
 }

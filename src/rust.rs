@@ -58,18 +58,20 @@ pub fn unset(scope: Scope) -> io::Result<()> {
 pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("cargo")?;
     let path = config_path(scope)?;
-    let configured = std::fs::read_to_string(&path)
+    let source = std::fs::read_to_string(&path)
         .ok()
         .and_then(|content| content.parse::<toml::Table>().ok())
-        .map(|document| {
-            registry(&document).is_some_and(|value| {
-                value.trim_start_matches("sparse+") == expected.trim_end_matches('/')
-            })
-        })
-        .unwrap_or(false);
+        .and_then(|document| registry(&document).map(str::to_owned));
+    let configured = source
+        .as_deref()
+        .is_some_and(|value| value.trim_start_matches("sparse+") == expected.trim_end_matches('/'));
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
     })
 }

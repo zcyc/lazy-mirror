@@ -17,12 +17,19 @@ pub fn unset() -> io::Result<()> {
 pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("sbt")?;
     let path = config_path()?;
-    let configured = std::fs::read_to_string(&path)
-        .map(|content| content.contains(expected))
-        .unwrap_or(false);
+    let source = std::fs::read_to_string(&path).ok().and_then(|content| {
+        content
+            .strip_prefix(PREFIX)
+            .map(|value| value.trim().to_owned())
+    });
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
         configured,
-        detail: format!("config={}", path.display()),
+        detail: format!(
+            "source={}; config={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
     })
 }

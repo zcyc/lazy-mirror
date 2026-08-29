@@ -18,14 +18,27 @@ pub fn unset(scope: Scope) -> io::Result<()> {
 pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = command_version()?;
     let path = profile_path(scope)?;
-    let in_environment = std::env::var("HF_ENDPOINT").is_ok_and(|value| value == expected);
-    let in_profile = std::fs::read_to_string(&path)
-        .map(|content| content.contains(expected))
-        .unwrap_or(false);
+    let source = std::env::var("HF_ENDPOINT").ok().or_else(|| {
+        std::fs::read_to_string(&path)
+            .ok()
+            .and_then(|content| env_value(&content, "HF_ENDPOINT"))
+    });
+    let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus {
-        configured: in_environment || in_profile,
-        detail: format!("HF_ENDPOINT; profile={}", path.display()),
+        configured,
+        detail: format!(
+            "source={}; profile={}",
+            source.unwrap_or_else(|| "not configured".to_owned()),
+            path.display()
+        ),
         version,
+    })
+}
+
+fn env_value(content: &str, variable: &str) -> Option<String> {
+    content.lines().find_map(|line| {
+        let value = line.split_once(&format!("{variable}=\""))?.1;
+        value.split_once('"').map(|(value, _)| value.to_owned())
     })
 }
 

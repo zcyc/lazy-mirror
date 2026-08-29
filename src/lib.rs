@@ -1,7 +1,9 @@
-use std::fs;
-use std::io;
+use std::fs::{self, OpenOptions};
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::thread;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 pub mod catalog;
 pub mod conda;
@@ -16,6 +18,7 @@ pub mod node;
 pub mod nuget;
 pub mod pdm;
 pub mod php;
+pub mod platform;
 pub mod poetry;
 pub mod probe;
 pub mod python;
@@ -63,6 +66,143 @@ pub struct ToolStatus {
     pub detail: String,
 }
 
+pub(crate) struct FileLock {
+    path: Option<PathBuf>,
+}
+
+impl FileLock {
+    fn acquire(path: &Path) -> io::Result<Self> {
+        let lock_path = lock_path(path);
+        if lock_path.parent().is_some_and(|parent| !parent.exists()) {
+            return Ok(Self { path: None });
+        }
+        let started = Instant::now();
+        loop {
+            match OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&lock_path)
+            {
+                Ok(mut file) => {
+                    let _ = writeln!(file, "pid={}", std::process::id());
+                    return Ok(Self {
+                        path: Some(lock_path),
+                    });
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::AlreadyExists
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    if fs::metadata(&lock_path)
+                        .and_then(|metadata| metadata.modified())
+                        .ok()
+                        .and_then(|modified| modified.elapsed().ok())
+                        .is_some_and(|age| age > Duration::from_secs(60))
+                    {
+                        let _ = fs::remove_file(&lock_path);
+                        continue;
+                    }
+                    thread::sleep(Duration::from_millis(50));
+                }
+                Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+                    return Err(io::Error::new(
+                        io::ErrorKind::WouldBlock,
+                        format!("timed out waiting for {}", lock_path.display()),
+                    ))
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
+}
+
+impl Drop for FileLock {
+    fn drop(&mut self) {
+        if let Some(path) = &self.path {
+            let _ = fs::remove_file(path);
+        }
+    }
+}
+
+pub(crate) fn lock(path: &Path) -> io::Result<FileLock> {
+    FileLock::acquire(path)
+}
+
+pub(crate) fn atomic_write(path: &Path, content: &str) -> io::Result<()> {
+    atomic_write_bytes(path, content.as_bytes())
+}
+
+fn atomic_write_bytes(path: &Path, content: &[u8]) -> io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let mode = fs::metadata(path).ok().map(file_mode);
+    let nonce = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_nanos();
+    let mut temporary = path.as_os_str().to_os_string();
+    temporary.push(format!(".lazy-mirror.tmp-{}-{nonce}", std::process::id()));
+    let temporary = PathBuf::from(temporary);
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)?;
+        if let Some(mode) = mode {
+            set_file_mode(&file, mode)?;
+        }
+        file.write_all(content)?;
+        file.sync_all()?;
+        replace_file(&temporary, path)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn replace_file(temporary: &Path, path: &Path) -> io::Result<()> {
+    match fs::rename(temporary, path) {
+        Ok(()) => Ok(()),
+        #[cfg(windows)]
+        Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {
+            fs::remove_file(path)?;
+            fs::rename(temporary, path)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(unix)]
+fn file_mode(metadata: fs::Metadata) -> u32 {
+    use std::os::unix::fs::PermissionsExt;
+
+    metadata.permissions().mode()
+}
+
+#[cfg(not(unix))]
+fn file_mode(metadata: fs::Metadata) -> bool {
+    metadata.permissions().readonly()
+}
+
+#[cfg(unix)]
+fn set_file_mode(file: &fs::File, mode: u32) -> io::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    file.set_permissions(fs::Permissions::from_mode(mode))
+}
+
+#[cfg(not(unix))]
+fn set_file_mode(file: &fs::File, readonly: bool) -> io::Result<()> {
+    let mut permissions = file.metadata()?.permissions();
+    permissions.set_readonly(readonly);
+    file.set_permissions(permissions)
+}
+
 pub(crate) fn home_file(relative_path: &str) -> io::Result<std::path::PathBuf> {
     dirs::home_dir()
         .map(|home| home.join(relative_path))
@@ -73,6 +213,13 @@ pub(crate) fn write_with_backup_if<F>(path: &Path, content: &str, managed: F) ->
 where
     F: Fn(&str) -> bool,
 {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = lock(path)?;
     let marker = created_marker_path(path);
     let had_file = path.exists();
     match fs::read_to_string(path) {
@@ -103,18 +250,15 @@ where
         Err(error) => return Err(error),
     }
 
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     if !had_file {
         fs::write(&marker, [])?;
     }
 
-    if let Err(error) = fs::write(path, content) {
+    if let Err(error) = atomic_write(path, content) {
         if had_file {
             let backup = backup_path(path);
             if backup.exists() {
-                let _ = fs::copy(&backup, path);
+                let _ = restore_file(&backup, path);
             }
         } else {
             let _ = fs::remove_file(path);
@@ -130,6 +274,7 @@ pub(crate) fn remove_owned_if<F>(path: &Path, managed: F) -> io::Result<()>
 where
     F: Fn(&str) -> bool,
 {
+    let _lock = lock(path)?;
     match fs::read_to_string(path) {
         Ok(existing) if managed(&existing) => fs::remove_file(path),
         Ok(_) => Err(io::Error::new(
@@ -142,6 +287,13 @@ where
 }
 
 pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -> io::Result<()> {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = lock(path)?;
     let start = format!("# >>> lazy-mirror:{name} >>>");
     let end_marker = format!("# <<< lazy-mirror:{name} <<<");
     let existing = read_optional(path)?.unwrap_or_default();
@@ -165,13 +317,11 @@ pub(crate) fn update_named_managed_block(path: &Path, name: &str, block: &str) -
             ))
         }
     };
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(path, format!("{content}\n"))
+    atomic_write(path, &format!("{content}\n"))
 }
 
 pub(crate) fn remove_named_managed_block(path: &Path, name: &str) -> io::Result<()> {
+    let _lock = lock(path)?;
     let start_marker = format!("# >>> lazy-mirror:{name} >>>");
     let end_marker = format!("# <<< lazy-mirror:{name} <<<");
     let Some(existing) = read_optional(path)? else {
@@ -188,13 +338,14 @@ pub(crate) fn remove_named_managed_block(path: &Path, name: &str) -> io::Result<
     };
     let end = start + relative_end + end_marker.len();
     let content = format!("{}{}", &existing[..start], &existing[end..]);
-    fs::write(path, content.trim_start_matches('\n'))
+    atomic_write(path, content.trim_start_matches('\n'))
 }
 
 pub(crate) fn remove_with_backup_if<F>(path: &Path, managed: F) -> io::Result<()>
 where
     F: Fn(&str) -> bool,
 {
+    let _lock = lock(path)?;
     let backup = backup_path(path);
     let marker = created_marker_path(path);
     if !backup.exists() && !marker.exists() {
@@ -203,7 +354,7 @@ where
     match fs::read_to_string(path) {
         Ok(existing) if managed(&existing) => {
             if backup.exists() {
-                fs::copy(&backup, path)?;
+                restore_file(&backup, path)?;
                 fs::remove_file(backup)?;
             } else {
                 fs::remove_file(path)?;
@@ -228,6 +379,13 @@ where
     F: FnOnce(&mut toml::Table) -> io::Result<()>,
     M: Fn(&toml::Table) -> bool,
 {
+    if let Some(parent) = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+    {
+        fs::create_dir_all(parent)?;
+    }
+    let _lock = lock(path)?;
     let backup = backup_path(path);
     let marker = created_marker_path(path);
     let had_file = path.exists();
@@ -269,9 +427,6 @@ where
                 ),
             ));
         }
-        if let Some(parent) = path.parent() {
-            fs::create_dir_all(parent)?;
-        }
         fs::write(&marker, [])?;
         new_marker = true;
     }
@@ -297,10 +452,10 @@ where
             return Err(io::Error::new(io::ErrorKind::InvalidData, error));
         }
     };
-    if let Err(error) = fs::write(path, content) {
+    if let Err(error) = atomic_write(path, &content) {
         if had_file {
             if backup.exists() {
-                let _ = fs::copy(&backup, path);
+                let _ = restore_file(&backup, path);
             }
         } else {
             let _ = fs::remove_file(path);
@@ -320,6 +475,7 @@ pub(crate) fn remove_toml_with_backup<M>(path: &Path, managed: M) -> io::Result<
 where
     M: Fn(&toml::Table) -> bool,
 {
+    let _lock = lock(path)?;
     let Some(content) = read_optional(path)? else {
         return Ok(());
     };
@@ -337,7 +493,7 @@ where
     }
     let backup = backup_path(path);
     if backup.exists() {
-        fs::copy(&backup, path)?;
+        restore_file(&backup, path)?;
         fs::remove_file(backup)?;
     } else {
         fs::remove_file(path)?;
@@ -356,6 +512,17 @@ fn created_marker_path(path: &Path) -> PathBuf {
     let mut marker = path.as_os_str().to_os_string();
     marker.push(".lazy-mirror.created");
     PathBuf::from(marker)
+}
+
+fn lock_path(path: &Path) -> PathBuf {
+    let mut lock = path.as_os_str().to_os_string();
+    lock.push(".lazy-mirror.lock");
+    PathBuf::from(lock)
+}
+
+fn restore_file(backup: &Path, path: &Path) -> io::Result<()> {
+    let content = fs::read_to_string(backup)?;
+    atomic_write(path, &content)
 }
 
 fn read_optional(path: &Path) -> io::Result<Option<String>> {
