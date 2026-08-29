@@ -41,6 +41,8 @@ lm reset docker
 `measure`、`check` 和 `doctor` 支持 `--cache-ttl SECONDS`、`--no-cache`、
 `--only-installed`、`--parallelism 1..64`。`get`、`plan` 也支持 `--only-installed`。
 `set` 支持 `--best` 自动选择最快可用源，以及 `--verify` 在写入前进行协议探测；两者可同时使用。
+`set all`/`reset all` 默认跳过未安装或当前作用域不支持的目标；需要全量原子执行时使用
+`set all --atomic`，它会对未安装目标直接失败。
 命令别名为：`ls/l`、`m/cesu`、`verify`、`g`、`s`、`r`。
 
 ## TOML 配置

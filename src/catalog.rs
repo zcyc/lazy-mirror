@@ -573,8 +573,7 @@ pub fn find(name: &str) -> Option<&'static TargetSpec> {
 
 pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Result<String> {
     let spec = find(target).ok_or_else(|| invalid_target(target))?;
-    let selection = selector.or_else(|| config.default_for(target));
-    let selection = selection.or_else(|| config.default_for(spec.name));
+    let selection = selector.or_else(|| config.default_for(spec.name));
     let Some(selection) = selection else {
         return spec.mirrors.first().map_or_else(
             || {

@@ -111,7 +111,7 @@ impl Config {
                 ));
             }
         }
-        validate_references(&defaults, &targets, &mirrors)?;
+        validate_references(&defaults, &mirrors)?;
         Ok(Self {
             path,
             mirrors,
@@ -126,29 +126,17 @@ impl Config {
     }
 
     pub fn default_for(&self, target: &str) -> Option<&str> {
-        self.defaults
-            .get(target)
-            .or_else(|| crate::catalog::find(target).and_then(|spec| self.defaults.get(spec.name)))
-            .or_else(|| {
-                self.targets
-                    .get(target)
-                    .and_then(|target| target.default.as_ref())
-            })
-            .or_else(|| {
-                crate::catalog::find(target).and_then(|spec| {
-                    self.targets
-                        .get(spec.name)
-                        .and_then(|target| target.default.as_ref())
-                })
-            })
-            .map(String::as_str)
+        let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
+        self.defaults.get(target).map(String::as_str).or_else(|| {
+            self.targets
+                .get(target)
+                .and_then(|target| target.default.as_deref())
+        })
     }
 
     pub fn enabled(&self, target: &str) -> bool {
-        self.targets
-            .get(target)
-            .or_else(|| crate::catalog::find(target).and_then(|spec| self.targets.get(spec.name)))
-            .is_none_or(|target| target.enabled)
+        let target = crate::catalog::find(target).map_or(target, |spec| spec.name);
+        self.targets.get(target).is_none_or(|target| target.enabled)
     }
 
     pub fn settings(&self) -> Settings {
@@ -230,17 +218,8 @@ fn canonical_target(name: &str) -> io::Result<String> {
 
 fn validate_references(
     defaults: &BTreeMap<String, String>,
-    targets: &BTreeMap<String, TargetConfig>,
     mirrors: &BTreeMap<String, String>,
 ) -> io::Result<()> {
-    for target in targets.keys() {
-        if crate::catalog::find(target).is_none() {
-            return Err(io::Error::new(
-                io::ErrorKind::InvalidData,
-                format!("unknown target {target} in TOML configuration"),
-            ));
-        }
-    }
     for (target, selection) in defaults {
         let spec = crate::catalog::find(target).ok_or_else(|| {
             io::Error::new(

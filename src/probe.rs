@@ -34,9 +34,17 @@ impl HealthCache {
                 entries: BTreeMap::new(),
             });
         }
-        let path = env::var_os("LM_CACHE_FILE")
-            .map(std::path::PathBuf::from)
-            .or_else(|| dirs::cache_dir().map(|path| path.join("lazy-mirror/health.json")));
+        let path = if let Some(path) = env::var_os("LM_CACHE_FILE") {
+            if path.is_empty() {
+                return Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    "LM_CACHE_FILE cannot be empty",
+                ));
+            }
+            Some(path.into())
+        } else {
+            dirs::cache_dir().map(|path| path.join("lazy-mirror/health.json"))
+        };
         let Some(path) = path else {
             return Ok(Self {
                 path: None,
@@ -171,7 +179,7 @@ fn request(url: &str, timeout_seconds: u64) -> io::Result<ProbeResult> {
         Command::new("curl").args(&args).output()?
     };
     if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+        let detail = redact_probe_text(String::from_utf8_lossy(&output.stderr).trim());
         return Err(io::Error::other(if detail.is_empty() {
             format!("curl exited with {}", output.status)
         } else {
@@ -259,13 +267,14 @@ fn state_detail(state: &str) -> String {
 
 fn target_url(target: &str, url: &str) -> String {
     let url = url.strip_prefix("sparse+").unwrap_or(url);
-    let url = url.split_once(',').map_or(url, |(url, _)| url);
+    let url = if target == "go" {
+        url.split_once(',').map_or(url, |(url, _)| url)
+    } else {
+        url
+    };
     let url = url.trim_end_matches('/');
     let suffix = match target {
-        "apt" => format!(
-            "/dists/{}/Release",
-            std::env::var("LM_APT_DISTRIBUTION").unwrap_or_else(|_| "stable".to_owned())
-        ),
+        "apt" => format!("/dists/{}/Release", crate::platform::apt_distribution()),
         "npm" | "pnpm" | "yarn" | "bun" => "/-/ping".to_owned(),
         "pip" | "uv" | "pdm" | "poetry" => "/simple/".to_owned(),
         "docker" | "containerd" | "podman" => "/v2/".to_owned(),
@@ -316,6 +325,33 @@ fn cacheable_url(url: &str) -> bool {
     !url.contains(['?', '#'])
 }
 
+fn redact_probe_text(value: &str) -> String {
+    value
+        .split_whitespace()
+        .map(redact_probe_url)
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+fn redact_probe_url(value: &str) -> String {
+    let Some(scheme) = value.find("://") else {
+        return value.to_owned();
+    };
+    let authority_start = scheme + 3;
+    let authority_end = value[authority_start..]
+        .find(['/', '?', '#'])
+        .map_or(value.len(), |offset| authority_start + offset);
+    let authority = &value[authority_start..authority_end];
+    let authority = authority
+        .rsplit_once('@')
+        .map_or(authority, |(_, host)| host);
+    let suffix = &value[authority_end..];
+    let suffix = suffix
+        .find(['?', '#'])
+        .map_or(suffix, |offset| &suffix[..offset]);
+    format!("{}://{}{}", &value[..scheme], authority, suffix)
+}
+
 fn parse_cache(content: &str) -> BTreeMap<String, CacheEntry> {
     let Ok(value) = serde_json::from_str::<serde_json::Value>(content) else {
         return BTreeMap::new();
@@ -325,6 +361,10 @@ fn parse_cache(content: &str) -> BTreeMap<String, CacheEntry> {
         .into_iter()
         .flat_map(|entries| entries.iter())
         .filter_map(|(key, value)| {
+            let source_url = key.split_once('\n').map(|(_, url)| url)?;
+            if !cacheable_url(source_url) {
+                return None;
+            }
             let checked_at = value.get("checked_at")?.as_u64()?;
             let result = value.get("result")?;
             Some((
@@ -377,6 +417,10 @@ mod tests {
             target_url("huggingface", "https://hf.example?token=secret"),
             "https://hf.example/api/models?limit=1&token=secret"
         );
+        assert_eq!(
+            target_url("huggingface", "https://hf.example?token=a,b"),
+            "https://hf.example/api/models?limit=1&token=a,b"
+        );
     }
 
     #[test]
@@ -397,5 +441,31 @@ mod tests {
     fn query_urls_are_not_written_to_health_cache() {
         assert!(!cacheable_url("https://mirror.example/simple?token=secret"));
         assert!(cacheable_url("https://mirror.example/simple"));
+    }
+
+    #[test]
+    fn probe_errors_redact_credentials_and_queries() {
+        assert_eq!(
+            redact_probe_text("curl: https://user:secret@example.com/simple?token=secret failed"),
+            "curl: https://example.com/simple failed"
+        );
+    }
+
+    #[test]
+    fn old_query_cache_entries_are_discarded() {
+        let content = serde_json::json!({
+            "pip\nhttps://example.com/simple?token=secret": {
+                "checked_at": 1,
+                "result": {
+                    "code": "200",
+                    "state": "healthy",
+                    "detail": "ok",
+                    "probe_url": "https://example.com/simple?token=secret",
+                    "milliseconds": 1
+                }
+            }
+        })
+        .to_string();
+        assert!(parse_cache(&content).is_empty());
     }
 }

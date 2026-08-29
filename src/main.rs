@@ -1159,20 +1159,24 @@ fn execute_all(
             eprintln!("{}: skipped; {error}", target_name(target));
             continue;
         }
+        if !is_installed(target) {
+            if options.atomic {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!(
+                        "{} is not installed; --atomic refuses a partial plan",
+                        target_name(target)
+                    ),
+                ));
+            }
+            eprintln!("{}: skipped; not installed", target_name(target));
+            continue;
+        }
         if options.atomic && !atomic_supported(target) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
                     "{} cannot participate in --atomic; use a single target or omit --atomic",
-                    target_name(target)
-                ),
-            ));
-        }
-        if options.atomic && !is_installed(target) {
-            return Err(io::Error::new(
-                io::ErrorKind::NotFound,
-                format!(
-                    "{} is not installed; --atomic refuses a partial plan",
                     target_name(target)
                 ),
             ));
@@ -1868,10 +1872,11 @@ fn is_installed(target: Target) -> bool {
 
 fn command_candidates(target: Target) -> &'static [&'static str] {
     match target {
-        Target::Npm | Target::Node => &["npm"],
+        Target::Npm => &["npm"],
         Target::Pnpm => &["pnpm"],
         Target::Yarn => &["yarn"],
         Target::Bun => &["bun"],
+        Target::Node => &["npm", "pnpm", "yarn", "bun"],
         Target::Go => &["go"],
         Target::Pip => &["pip"],
         Target::Pip3 => &["pip3"],
@@ -1881,16 +1886,18 @@ fn command_candidates(target: Target) -> &'static [&'static str] {
         Target::Poetry => &["poetry"],
         Target::Composer | Target::Php => &["composer"],
         Target::Gem | Target::Bundle | Target::Ruby => &["gem"],
-        Target::Maven | Target::Java => &["mvn"],
+        Target::Maven => &["mvn"],
         Target::Gradle => &["gradle"],
         Target::Sbt => &["sbt"],
-        Target::Cargo | Target::Rust => &["cargo"],
+        Target::Java => &["mvn", "gradle", "sbt"],
+        Target::Cargo => &["cargo"],
+        Target::Rust => &["cargo", "rustup"],
         Target::Docker => &["docker"],
         Target::Containerd | Target::Nerdctl => &["containerd", "nerdctl"],
         Target::Podman => &["podman"],
         Target::Conda => &["conda"],
         Target::Mamba => &["mamba"],
-        Target::Dart => &["dart"],
+        Target::Dart => &["dart", "flutter"],
         Target::Flutter => &["flutter"],
         Target::Nuget | Target::Dotnet => &["dotnet"],
         Target::Cran | Target::R => &["R"],
@@ -1908,7 +1915,8 @@ fn command_candidates(target: Target) -> &'static [&'static str] {
         Target::Nvm => &["node"],
         Target::Luarocks => &["luarocks"],
         Target::Clojure => &["clojure"],
-        Target::Haskell | Target::Hackage | Target::Cabal => &["cabal"],
+        Target::Haskell => &["cabal", "stack"],
+        Target::Hackage | Target::Cabal => &["cabal"],
         Target::Stack => &["stack"],
         Target::Ocaml => &["opam"],
         Target::Cocoapods => &["pod"],
@@ -2570,5 +2578,17 @@ mod tests {
             record("https://broken.example", "unavailable", 1),
         ]);
         assert_eq!(selected.as_deref(), Some("https://fast.example"));
+    }
+
+    #[test]
+    fn grouped_targets_detect_any_installed_member() {
+        assert_eq!(
+            command_candidates(Target::Node),
+            &["npm", "pnpm", "yarn", "bun"]
+        );
+        assert_eq!(command_candidates(Target::Java), &["mvn", "gradle", "sbt"]);
+        assert_eq!(command_candidates(Target::Rust), &["cargo", "rustup"]);
+        assert_eq!(command_candidates(Target::Dart), &["dart", "flutter"]);
+        assert_eq!(command_candidates(Target::Haskell), &["cabal", "stack"]);
     }
 }
