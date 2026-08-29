@@ -1,0 +1,373 @@
+use std::io;
+
+use crate::config::Config;
+
+#[derive(Debug, Clone, Copy)]
+pub struct MirrorSpec {
+    pub name: &'static str,
+    pub url: &'static str,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct TargetSpec {
+    pub name: &'static str,
+    pub aliases: &'static [&'static str],
+    pub mirrors: &'static [MirrorSpec],
+}
+
+const NODE: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "npmmirror",
+        url: "https://registry.npmmirror.com/",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/npm/",
+    },
+];
+const GO: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "goproxy",
+        url: "https://goproxy.cn,direct",
+    },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/goproxy/",
+    },
+    MirrorSpec {
+        name: "goproxyio",
+        url: "https://goproxy.io,direct",
+    },
+];
+const PYPI: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://pypi.tuna.tsinghua.edu.cn/simple",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://pypi.mirrors.ustc.edu.cn/simple",
+    },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/pypi/simple/",
+    },
+    MirrorSpec {
+        name: "bfsu",
+        url: "https://mirrors.bfsu.edu.cn/pypi/web/simple",
+    },
+];
+const COMPOSER: &[MirrorSpec] = &[MirrorSpec {
+    name: "aliyun",
+    url: "https://mirrors.aliyun.com/composer/",
+}];
+const RUBYGEMS: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "ruby-china",
+        url: "https://gems.ruby-china.com",
+    },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/rubygems/",
+    },
+];
+const JAVA: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://maven.aliyun.com/repository/public",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/repository/maven-public/",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/maven/",
+    },
+];
+const CARGO: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "rsproxy",
+        url: "https://rsproxy.cn/index/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/crates.io-index/",
+    },
+];
+const DOCKER: &[MirrorSpec] = &[MirrorSpec {
+    name: "daocloud",
+    url: "https://docker.m.daocloud.io",
+}];
+const CONDA: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/anaconda",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/anaconda",
+    },
+];
+const DART: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirror.sjtu.edu.cn/dart-pub",
+    },
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/dart-pub",
+    },
+    MirrorSpec {
+        name: "flutter-io",
+        url: "https://pub.flutter-io.cn",
+    },
+];
+const FLUTTER: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirror.sjtu.edu.cn",
+    },
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/flutter",
+    },
+    MirrorSpec {
+        name: "flutter-io",
+        url: "https://storage.flutter-io.cn",
+    },
+];
+const CRAN: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/CRAN",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/CRAN",
+    },
+];
+const HUGGINGFACE: &[MirrorSpec] = &[MirrorSpec {
+    name: "hf-mirror",
+    url: "https://hf-mirror.com",
+}];
+const EMPTY: &[MirrorSpec] = &[];
+
+const TARGETS: &[TargetSpec] = &[
+    TargetSpec {
+        name: "npm",
+        aliases: &["node", "nodejs"],
+        mirrors: NODE,
+    },
+    TargetSpec {
+        name: "pnpm",
+        aliases: &[],
+        mirrors: NODE,
+    },
+    TargetSpec {
+        name: "yarn",
+        aliases: &[],
+        mirrors: NODE,
+    },
+    TargetSpec {
+        name: "bun",
+        aliases: &[],
+        mirrors: NODE,
+    },
+    TargetSpec {
+        name: "go",
+        aliases: &[],
+        mirrors: GO,
+    },
+    TargetSpec {
+        name: "pip",
+        aliases: &["pip3", "python"],
+        mirrors: PYPI,
+    },
+    TargetSpec {
+        name: "uv",
+        aliases: &[],
+        mirrors: PYPI,
+    },
+    TargetSpec {
+        name: "pdm",
+        aliases: &[],
+        mirrors: PYPI,
+    },
+    TargetSpec {
+        name: "poetry",
+        aliases: &[],
+        mirrors: PYPI,
+    },
+    TargetSpec {
+        name: "composer",
+        aliases: &["php"],
+        mirrors: COMPOSER,
+    },
+    TargetSpec {
+        name: "gem",
+        aliases: &["ruby"],
+        mirrors: RUBYGEMS,
+    },
+    TargetSpec {
+        name: "bundle",
+        aliases: &[],
+        mirrors: RUBYGEMS,
+    },
+    TargetSpec {
+        name: "maven",
+        aliases: &["java"],
+        mirrors: JAVA,
+    },
+    TargetSpec {
+        name: "gradle",
+        aliases: &[],
+        mirrors: JAVA,
+    },
+    TargetSpec {
+        name: "sbt",
+        aliases: &[],
+        mirrors: JAVA,
+    },
+    TargetSpec {
+        name: "cargo",
+        aliases: &["rust"],
+        mirrors: CARGO,
+    },
+    TargetSpec {
+        name: "docker",
+        aliases: &[],
+        mirrors: DOCKER,
+    },
+    TargetSpec {
+        name: "containerd",
+        aliases: &["nerdctl"],
+        mirrors: DOCKER,
+    },
+    TargetSpec {
+        name: "podman",
+        aliases: &[],
+        mirrors: DOCKER,
+    },
+    TargetSpec {
+        name: "conda",
+        aliases: &["mamba", "anaconda"],
+        mirrors: CONDA,
+    },
+    TargetSpec {
+        name: "dart",
+        aliases: &["pub"],
+        mirrors: DART,
+    },
+    TargetSpec {
+        name: "flutter",
+        aliases: &[],
+        mirrors: FLUTTER,
+    },
+    TargetSpec {
+        name: "cran",
+        aliases: &["r"],
+        mirrors: CRAN,
+    },
+    TargetSpec {
+        name: "huggingface",
+        aliases: &["hf", "huggingface-hub"],
+        mirrors: HUGGINGFACE,
+    },
+    TargetSpec {
+        name: "nuget",
+        aliases: &["dotnet"],
+        mirrors: EMPTY,
+    },
+];
+
+pub fn targets() -> &'static [TargetSpec] {
+    TARGETS
+}
+
+pub fn find(name: &str) -> Option<&'static TargetSpec> {
+    TARGETS
+        .iter()
+        .find(|target| target.name == name || target.aliases.contains(&name))
+}
+
+pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Result<String> {
+    let spec = find(target).ok_or_else(|| invalid_target(target))?;
+    let selection = selector.or_else(|| config.default_for(target));
+    let selection = selection.or_else(|| config.default_for(spec.name));
+    let Some(selection) = selection else {
+        return spec.mirrors.first().map_or_else(
+            || {
+                Err(io::Error::new(
+                    io::ErrorKind::InvalidInput,
+                    format!("{target} requires a mirror name or URL"),
+                ))
+            },
+            |mirror| Ok(mirror.url.to_owned()),
+        );
+    };
+    if is_url(selection) {
+        return Ok(selection.to_owned());
+    }
+    if let Some(url) = config.mirror(selection) {
+        return Ok(url.to_owned());
+    }
+    spec.mirrors
+        .iter()
+        .find(|mirror| mirror.name == selection)
+        .map(|mirror| mirror.url.to_owned())
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("unknown mirror {selection} for {target}; use lm list {target} or a URL"),
+            )
+        })
+}
+
+pub fn builtin_mirrors(target: &str) -> io::Result<&'static [MirrorSpec]> {
+    find(target)
+        .map(|target| target.mirrors)
+        .ok_or_else(|| invalid_target(target))
+}
+
+fn is_url(value: &str) -> bool {
+    (value.starts_with("https://") || value.starts_with("http://"))
+        && !value.contains(char::is_whitespace)
+}
+
+fn invalid_target(target: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::InvalidInput,
+        format!("unsupported target: {target}"),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[test]
+    fn config_url_overrides_builtin_selection() {
+        let path = std::env::temp_dir().join(format!("lm-catalog-{}.toml", std::process::id()));
+        fs::write(
+            &path,
+            "[mirrors]\ncorp = { url = \"https://mirror.example/simple\" }\n[defaults]\npip = \"corp\"\n",
+        )
+        .unwrap();
+        let config = Config::load(Some(&path)).unwrap();
+        assert_eq!(
+            resolve("pip", None, &config).unwrap(),
+            "https://mirror.example/simple"
+        );
+        assert_eq!(
+            resolve("pip", Some("https://override.example/simple"), &config).unwrap(),
+            "https://override.example/simple"
+        );
+        assert_eq!(
+            resolve("huggingface", Some("hf-mirror"), &config).unwrap(),
+            "https://hf-mirror.com"
+        );
+        fs::remove_file(path).unwrap();
+    }
+}

@@ -1,0 +1,56 @@
+use std::io;
+
+use crate::config::Scope;
+
+pub fn set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let path = profile_path(scope)?;
+    crate::update_named_managed_block(
+        &path,
+        "huggingface",
+        &format!("export HF_ENDPOINT=\"{mirror}\""),
+    )
+}
+
+pub fn unset(scope: Scope) -> io::Result<()> {
+    crate::remove_named_managed_block(&profile_path(scope)?, "huggingface")
+}
+
+pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+    let version = command_version()?;
+    let path = profile_path(scope)?;
+    let in_environment = std::env::var("HF_ENDPOINT").is_ok_and(|value| value == expected);
+    let in_profile = std::fs::read_to_string(&path)
+        .map(|content| content.contains(expected))
+        .unwrap_or(false);
+    Ok(crate::ToolStatus {
+        configured: in_environment || in_profile,
+        detail: format!("HF_ENDPOINT; profile={}", path.display()),
+        version,
+    })
+}
+
+fn command_version() -> io::Result<String> {
+    crate::command_version("hf").or_else(|_| crate::command_version("huggingface-cli"))
+}
+
+fn profile_path(scope: Scope) -> io::Result<std::path::PathBuf> {
+    match scope {
+        Scope::Project => std::env::current_dir().map(|path| path.join(".env")),
+        Scope::User => {
+            if let Some(path) = std::env::var_os("LM_SHELL_PROFILE") {
+                return Ok(path.into());
+            }
+            let shell = std::env::var_os("SHELL")
+                .map(|value| value.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            if shell.ends_with("/fish") {
+                crate::home_file(".config/fish/config.fish")
+            } else if shell.ends_with("/bash") {
+                crate::home_file(".bashrc")
+            } else {
+                crate::home_file(".zshrc")
+            }
+        }
+        Scope::System => Ok("/etc/profile".into()),
+    }
+}
