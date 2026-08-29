@@ -312,7 +312,7 @@ impl Config {
             .iter()
             .map(|(name, target)| {
                 let default = target.default.as_ref().map(|value| {
-                    if is_url(value) {
+                    if redactable_url(value) {
                         redact_url(value)
                     } else {
                         value.clone()
@@ -322,7 +322,7 @@ impl Config {
                     items
                         .iter()
                         .map(|value| {
-                            if is_url(value) {
+                            if redactable_url(value) {
                                 redact_url(value)
                             } else {
                                 value.clone()
@@ -348,7 +348,7 @@ impl Config {
             .map(|(name, value)| {
                 (
                     name.clone(),
-                    serde_json::Value::String(if is_url(value) {
+                    serde_json::Value::String(if redactable_url(value) {
                         redact_url(value)
                     } else {
                         value.clone()
@@ -627,7 +627,14 @@ pub(crate) fn is_url(value: &str) -> bool {
 }
 
 pub(crate) fn is_selection_url(target: &str, value: &str) -> bool {
-    is_url(value) || (target == "cargo" && value.strip_prefix("sparse+").is_some_and(is_url))
+    let url = value.strip_prefix("sparse+").unwrap_or(value);
+    is_url(url)
+        && (target == "cargo" || !value.starts_with("sparse+"))
+        && (target != "cargo" || !url.contains(['?', '#']))
+}
+
+fn redactable_url(value: &str) -> bool {
+    is_url(value) || value.strip_prefix("sparse+").is_some_and(is_url)
 }
 
 fn redact_url(value: &str) -> String {
@@ -833,6 +840,25 @@ mod tests {
         let error = Config::load(Some(&path)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::InvalidData);
         fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn cargo_sparse_urls_are_strict_and_redactable() {
+        assert!(is_selection_url(
+            "cargo",
+            "sparse+https://mirror.example/index/"
+        ));
+        assert!(!is_selection_url(
+            "cargo",
+            "sparse+https://mirror.example/index?token=secret"
+        ));
+        assert!(redactable_url(
+            "sparse+https://mirror.example/index?token=secret"
+        ));
+        assert_eq!(
+            redact_url("sparse+https://mirror.example/index?token=secret"),
+            "sparse+https://mirror.example/index"
+        );
     }
 
     #[test]

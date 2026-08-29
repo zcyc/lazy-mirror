@@ -1087,7 +1087,6 @@ fn run_rust_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Res
 }
 
 fn run_dart_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
-    let flutter_mirror = mirror.map(lm::dart::flutter_mirror);
     let mut applied = false;
     if is_installed(Target::Dart) {
         match action {
@@ -1098,7 +1097,7 @@ fn run_dart_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Res
     }
     if is_installed(Target::Flutter) {
         match action {
-            Action::Set => lm::dart::flutter_set(flutter_mirror.as_deref().unwrap(), scope)?,
+            Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope)?,
             Action::Reset => lm::dart::flutter_unset(scope)?,
         }
         applied = true;
@@ -1124,16 +1123,18 @@ fn select_mirror(
         return lm::catalog::resolve(catalog_name(target), selector, config);
     }
     let cache = cache.ok_or_else(|| io::Error::other("best mirror selection requires a cache"))?;
-    let candidates = measure_one(
+    let candidates = filter_group_candidates(
         target,
-        None,
-        config,
-        cache,
-        Some(config.settings().parallelism),
-        lm::probe::IpVersion::Any,
-    )?
-    .into_iter()
-    .collect::<Vec<_>>();
+        target == Target::Rust && is_installed(Target::Rustup),
+        measure_one(
+            target,
+            None,
+            config,
+            cache,
+            Some(config.settings().parallelism),
+            lm::probe::IpVersion::Any,
+        )?,
+    );
     fastest_mirror(candidates).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -1146,6 +1147,20 @@ fn fastest_mirror(mut candidates: Vec<MeasureRecord>) -> Option<String> {
     candidates.retain(probe_is_usable);
     candidates.sort_by_key(|record| record.milliseconds.unwrap_or(u128::MAX));
     candidates.into_iter().next().map(|record| record.url)
+}
+
+fn filter_group_candidates(
+    target: Target,
+    rustup_required: bool,
+    candidates: Vec<MeasureRecord>,
+) -> Vec<MeasureRecord> {
+    if target != Target::Rust || !rustup_required {
+        return candidates;
+    }
+    candidates
+        .into_iter()
+        .filter(|record| group_member_mirror(target, Target::Rustup, &record.url).is_ok())
+        .collect()
 }
 
 fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()> {
@@ -2345,6 +2360,7 @@ fn redact_selection(value: &str) -> String {
 }
 
 fn config_url(value: &str) -> bool {
+    let value = value.strip_prefix("sparse+").unwrap_or(value);
     value.starts_with("http://") || value.starts_with("https://")
 }
 
@@ -2992,10 +3008,13 @@ fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str,
     let base = mirror.trim_end_matches('/');
     let values = match target {
         Target::Dart => vec![("PUB_HOSTED_URL", mirror.to_owned())],
-        Target::Flutter => vec![
-            ("PUB_HOSTED_URL", flutter_pub_url(mirror)),
-            ("FLUTTER_STORAGE_BASE_URL", mirror.to_owned()),
-        ],
+        Target::Flutter => {
+            let (pub_url, storage_url) = lm::dart::flutter_urls(mirror);
+            vec![
+                ("PUB_HOSTED_URL", pub_url),
+                ("FLUTTER_STORAGE_BASE_URL", storage_url),
+            ]
+        }
         Target::Huggingface => vec![("HF_ENDPOINT", mirror.to_owned())],
         Target::Brew => vec![
             (
@@ -3025,16 +3044,6 @@ fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str,
         _ => return None,
     };
     Some(values)
-}
-
-fn flutter_pub_url(mirror: &str) -> String {
-    if mirror.ends_with("/flutter") {
-        return format!("{}/dart-pub", mirror.trim_end_matches("/flutter"));
-    }
-    if mirror == "https://storage.flutter-io.cn" {
-        return "https://pub.flutter-io.cn".to_owned();
-    }
-    mirror.to_owned()
 }
 
 fn shell_single_quote(value: &str) -> String {
@@ -3394,6 +3403,38 @@ mod tests {
     }
 
     #[test]
+    fn rust_best_candidates_exclude_rustup_incompatible_sources() {
+        let record = |url: &str, milliseconds| MeasureRecord {
+            target: "cargo".to_owned(),
+            mirror: url.to_owned(),
+            url: url.to_owned(),
+            probe_url: None,
+            code: Some("200".to_owned()),
+            state: "healthy".to_owned(),
+            detail: None,
+            milliseconds: Some(milliseconds),
+            metrics: None,
+            cached: false,
+            error: None,
+        };
+        let candidates = filter_group_candidates(
+            Target::Rust,
+            true,
+            vec![
+                record("https://mirrors.ustc.edu.cn/crates.io-index/", 1),
+                record("https://rsproxy.cn/index/", 2),
+            ],
+        );
+        assert_eq!(
+            candidates
+                .iter()
+                .map(|record| record.url.as_str())
+                .collect::<Vec<_>>(),
+            vec!["https://rsproxy.cn/index/"]
+        );
+    }
+
+    #[test]
     fn grouped_targets_detect_any_installed_member() {
         assert_eq!(
             target_capabilities(Target::Node).commands,
@@ -3528,6 +3569,19 @@ mod tests {
                 (
                     "FLUTTER_STORAGE_BASE_URL",
                     "https://mirror.example/flutter".to_owned()
+                ),
+            ])
+        );
+        assert_eq!(
+            environment_values(Target::Flutter, "https://mirror.sjtu.edu.cn"),
+            Some(vec![
+                (
+                    "PUB_HOSTED_URL",
+                    "https://mirror.sjtu.edu.cn/dart-pub".to_owned()
+                ),
+                (
+                    "FLUTTER_STORAGE_BASE_URL",
+                    "https://mirror.sjtu.edu.cn".to_owned()
                 ),
             ])
         );

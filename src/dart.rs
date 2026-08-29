@@ -13,14 +13,14 @@ pub fn dart_set(mirror: &str, scope: Scope) -> io::Result<()> {
 }
 
 pub fn flutter_set(mirror: &str, scope: Scope) -> io::Result<()> {
+    let (pub_url, storage_url) = flutter_urls(mirror);
     let path = profile_path(scope)?;
-    let pub_url = pub_url(mirror);
     crate::update_named_managed_block(
         &path,
         "flutter",
         &[
             crate::shell_env_assignment("PUB_HOSTED_URL", &pub_url),
-            crate::shell_env_assignment("FLUTTER_STORAGE_BASE_URL", mirror),
+            crate::shell_env_assignment("FLUTTER_STORAGE_BASE_URL", &storage_url),
         ]
         .join("\n"),
     )
@@ -85,25 +85,36 @@ fn env_value(content: &str, variable: &str) -> Option<String> {
         .find_map(|line| crate::shell_env_value(line, variable))
 }
 
-fn pub_url(mirror: &str) -> String {
-    if mirror.ends_with("/flutter") {
-        return format!("{}/dart-pub", mirror.trim_end_matches("/flutter"));
+pub fn flutter_urls(mirror: &str) -> (String, String) {
+    let mirror = mirror.trim_end_matches('/');
+    if let Some(base) = mirror.strip_suffix("/dart-pub") {
+        let storage = if base == "https://mirrors.tuna.tsinghua.edu.cn" {
+            format!("{base}/flutter")
+        } else {
+            base.to_owned()
+        };
+        return (mirror.to_owned(), storage);
+    }
+    if let Some(base) = mirror.strip_suffix("/flutter") {
+        return (format!("{base}/dart-pub"), mirror.to_owned());
+    }
+    if mirror == "https://pub.flutter-io.cn" {
+        return (
+            mirror.to_owned(),
+            "https://storage.flutter-io.cn".to_owned(),
+        );
     }
     if mirror == "https://storage.flutter-io.cn" {
-        return "https://pub.flutter-io.cn".to_owned();
+        return ("https://pub.flutter-io.cn".to_owned(), mirror.to_owned());
     }
-    mirror.to_owned()
+    if mirror == "https://mirror.sjtu.edu.cn" {
+        return (format!("{mirror}/dart-pub"), mirror.to_owned());
+    }
+    (mirror.to_owned(), mirror.to_owned())
 }
 
 pub fn flutter_mirror(mirror: &str) -> String {
-    let mirror = mirror.trim_end_matches('/');
-    if let Some(base) = mirror.strip_suffix("/dart-pub") {
-        return base.to_owned();
-    }
-    if mirror == "https://pub.flutter-io.cn" {
-        return "https://storage.flutter-io.cn".to_owned();
-    }
-    mirror.to_owned()
+    flutter_urls(mirror).1
 }
 
 fn profile_path(scope: Scope) -> io::Result<PathBuf> {
@@ -143,7 +154,7 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
 
 #[cfg(test)]
 mod tests {
-    use super::flutter_mirror;
+    use super::{flutter_mirror, flutter_urls};
 
     #[test]
     fn dart_mirror_maps_to_flutter_storage_mirror() {
@@ -154,6 +165,20 @@ mod tests {
         assert_eq!(
             flutter_mirror("https://pub.flutter-io.cn"),
             "https://storage.flutter-io.cn"
+        );
+        assert_eq!(
+            flutter_urls("https://mirror.sjtu.edu.cn/dart-pub"),
+            (
+                "https://mirror.sjtu.edu.cn/dart-pub".to_owned(),
+                "https://mirror.sjtu.edu.cn".to_owned()
+            )
+        );
+        assert_eq!(
+            flutter_urls("https://mirrors.tuna.tsinghua.edu.cn/dart-pub"),
+            (
+                "https://mirrors.tuna.tsinghua.edu.cn/dart-pub".to_owned(),
+                "https://mirrors.tuna.tsinghua.edu.cn/flutter".to_owned()
+            )
         );
     }
 }

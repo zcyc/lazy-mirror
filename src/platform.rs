@@ -878,7 +878,7 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
                 {
                     return crate::powershell_profile_path();
                 }
-                crate::home_file(".profile")
+                crate::home_file(profile_relative_path(&shell()))
             }
         }
         Scope::System => {
@@ -891,6 +891,20 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
                 Ok(PathBuf::from("/etc/profile"))
             }
         }
+    }
+}
+
+fn shell() -> String {
+    std::env::var_os("SHELL")
+        .map(|value| value.to_string_lossy().into_owned())
+        .unwrap_or_default()
+}
+
+fn profile_relative_path(shell: &str) -> &'static str {
+    if shell.ends_with("/fish") {
+        ".config/fish/config.fish"
+    } else {
+        ".profile"
     }
 }
 
@@ -946,7 +960,7 @@ pub(crate) fn apt_distribution() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{nix_mirror, os_content, source_for_restore};
+    use super::{nix_mirror, os_content, profile_relative_path, source_for_restore};
 
     #[test]
     fn msys2_uses_pacman_repository_layout() {
@@ -975,5 +989,14 @@ mod tests {
             Some("https://cache.example")
         );
         assert_eq!(nix_mirror("https://cache.example"), None);
+    }
+
+    #[test]
+    fn fish_uses_its_startup_configuration_file() {
+        assert_eq!(
+            profile_relative_path("/usr/bin/fish"),
+            ".config/fish/config.fish"
+        );
+        assert_eq!(profile_relative_path("/bin/bash"), ".profile");
     }
 }
