@@ -654,7 +654,10 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
         }
         return Err(io::Error::new(
             io::ErrorKind::InvalidInput,
-            format!("mirror {selection} is not valid for {target}"),
+            format!(
+                "mirror {} is not valid for {target}",
+                crate::config::redact_selection(selection)
+            ),
         ));
     }
     spec.mirrors
@@ -664,7 +667,10 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
         .ok_or_else(|| {
             io::Error::new(
                 io::ErrorKind::InvalidInput,
-                format!("unknown mirror {selection} for {target}; use lm list {target} or a URL"),
+                format!(
+                    "unknown mirror {} for {target}; use lm list {target} or a URL",
+                    crate::config::redact_selection(selection)
+                ),
             )
         })
 }

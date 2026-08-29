@@ -213,6 +213,23 @@ fn invalid_parallelism_has_a_configuration_exit_code() {
 }
 
 #[test]
+fn invalid_selector_errors_do_not_leak_query_parameters() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args([
+            "--no-config",
+            "measure",
+            "cargo",
+            "sparse+https://mirror.example/index?token=secret",
+        ])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    let output = String::from_utf8_lossy(&output.stderr);
+    assert!(output.contains("sparse+https://mirror.example/index"));
+    assert!(!output.contains("token=secret"));
+}
+
+#[test]
 fn catalog_lint_is_machine_readable() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
         .args(["--no-config", "catalog", "lint", "--format", "json"])

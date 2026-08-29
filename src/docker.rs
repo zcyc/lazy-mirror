@@ -13,6 +13,7 @@ const CONFIG_ENV: &str = "LM_DOCKER_DAEMON_CONFIG";
 const BUILDKIT_CONFIG_ENV: &str = "LM_BUILDKIT_CONFIG";
 const CREATED_SUFFIX: &str = ".lazy-mirror.created";
 const CURRENT_SUFFIX: &str = ".lazy-mirror.current";
+const BUILDKIT_CURRENT_SUFFIX: &str = ".lazy-mirror.buildkit.current";
 
 const MIRRORS: &[(&str, &str)] = &[("daocloud", "https://docker.m.daocloud.io")];
 
@@ -34,13 +35,16 @@ fn buildkit_set_at(path: &Path, mirror: &str) -> io::Result<()> {
     let previous_content = fs::read_to_string(path).ok();
     let had_backup = crate::backup_path(path).exists();
     let had_created_marker = crate::created_marker_path(path).exists();
-    let previous_marker = fs::read_to_string(current_marker_path(path)).ok();
+    let previous_marker = fs::read_to_string(buildkit_current_marker_path(path)).ok();
     crate::update_toml(
         path,
         |document| set_buildkit_mirror(document, mirror),
         |document| is_buildkit_managed(path, document),
     )?;
-    if let Err(error) = crate::atomic_write(&current_marker_path(path), mirror) {
+    let result = fs::read_to_string(path)
+        .map(|content| buildkit_state(mirror, &content))
+        .and_then(|state| crate::atomic_write(&buildkit_current_marker_path(path), &state));
+    if let Err(error) = result {
         if let Some(content) = previous_content {
             let _ = crate::atomic_write(path, &content);
         } else {
@@ -54,10 +58,10 @@ fn buildkit_set_at(path: &Path, mirror: &str) -> io::Result<()> {
         }
         match previous_marker {
             Some(marker) => {
-                let _ = crate::atomic_write(&current_marker_path(path), &marker);
+                let _ = crate::atomic_write(&buildkit_current_marker_path(path), &marker);
             }
             None => {
-                let _ = fs::remove_file(current_marker_path(path));
+                let _ = fs::remove_file(buildkit_current_marker_path(path));
             }
         }
         return Err(error);
@@ -94,28 +98,35 @@ fn is_buildkit_managed(path: &Path, document: &toml::Table) -> bool {
     let Some(mirror) = buildkit_mirror(document) else {
         return false;
     };
-    let Some(current) = fs::read_to_string(current_marker_path(path)).ok() else {
+    let Some(current) = fs::read_to_string(buildkit_current_marker_path(path)).ok() else {
         return false;
     };
-    if current.trim() != mirror || validate_mirror(mirror).is_err() {
+    let Some((current_mirror, current_fingerprint)) = current.trim_end().split_once('\n') else {
+        return false;
+    };
+    let Ok(content) = fs::read_to_string(path) else {
+        return false;
+    };
+    if current_mirror != mirror
+        || current_fingerprint != buildkit_fingerprint(&content)
+        || validate_mirror(mirror).is_err()
+    {
         return false;
     }
+    true
+}
 
-    let mut expected = if crate::backup_path(path).exists() {
-        let Ok(content) = fs::read_to_string(crate::backup_path(path)) else {
-            return false;
-        };
-        let Ok(document) = content.parse::<toml::Table>() else {
-            return false;
-        };
-        document
-    } else {
-        if !crate::created_marker_path(path).exists() {
-            return false;
-        }
-        toml::Table::new()
-    };
-    set_buildkit_mirror(&mut expected, mirror).is_ok() && expected == *document
+fn buildkit_state(mirror: &str, content: &str) -> String {
+    format!("{mirror}\n{}\n", buildkit_fingerprint(content))
+}
+
+fn buildkit_fingerprint(content: &str) -> String {
+    let mut hash = 0xcbf29ce484222325_u64;
+    for byte in content.bytes() {
+        hash ^= u64::from(byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    format!("{hash:016x}")
 }
 
 pub fn buildkit_unset(scope: Scope) -> io::Result<()> {
@@ -141,7 +152,7 @@ fn buildkit_unset_at(path: &Path) -> io::Result<()> {
     let result =
         crate::remove_toml_with_backup(path, |document| is_buildkit_managed(path, document));
     if result.is_ok() {
-        let _ = fs::remove_file(current_marker_path(path));
+        let _ = fs::remove_file(buildkit_current_marker_path(path));
     }
     result
 }
@@ -486,6 +497,12 @@ fn current_marker_path(path: &Path) -> PathBuf {
     PathBuf::from(marker)
 }
 
+fn buildkit_current_marker_path(path: &Path) -> PathBuf {
+    let mut marker = path.as_os_str().to_os_string();
+    marker.push(BUILDKIT_CURRENT_SUFFIX);
+    PathBuf::from(marker)
+}
+
 fn mirror_name(url: &str) -> Option<&'static str> {
     MIRRORS
         .iter()
@@ -699,6 +716,21 @@ mod tests {
         let content = fs::read_to_string(&path)
             .unwrap()
             .replace("debug = true", "debug = false");
+        fs::write(&path, &content).unwrap();
+
+        assert!(buildkit_unset_at(&path).is_err());
+        assert_eq!(fs::read_to_string(&path).unwrap(), content);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn buildkit_reset_refuses_external_comments() {
+        let path = temp_path("buildkit-comment").with_file_name("buildkitd.toml");
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(&path, "debug = true\n").unwrap();
+
+        buildkit_set_at(&path, mirror_url("daocloud").unwrap()).unwrap();
+        let content = format!("{}# external note\n", fs::read_to_string(&path).unwrap());
         fs::write(&path, &content).unwrap();
 
         assert!(buildkit_unset_at(&path).is_err());

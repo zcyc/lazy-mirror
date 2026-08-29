@@ -644,6 +644,14 @@ fn redactable_url(value: &str) -> bool {
     is_url(value) || value.strip_prefix("sparse+").is_some_and(is_url)
 }
 
+pub fn redact_selection(value: &str) -> String {
+    if redactable_url(value) {
+        redact_url(value)
+    } else {
+        value.to_owned()
+    }
+}
+
 fn redact_url(value: &str) -> String {
     let Some(scheme) = value.find("://") else {
         return value.to_owned();

@@ -6,7 +6,7 @@ use std::thread;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
-use lm::config::{Config, Scope};
+use lm::config::{redact_selection, Config, Scope};
 
 const STARTER_CONFIG: &str = r#"# lazy-mirror configuration
 
@@ -2359,19 +2359,6 @@ fn explanation_json(
             "error": status.error,
         },
     })
-}
-
-fn redact_selection(value: &str) -> String {
-    if config_url(value) {
-        redact_url(value)
-    } else {
-        value.to_owned()
-    }
-}
-
-fn config_url(value: &str) -> bool {
-    let value = value.strip_prefix("sparse+").unwrap_or(value);
-    value.starts_with("http://") || value.starts_with("https://")
 }
 
 fn print_explanation(value: serde_json::Value) {
