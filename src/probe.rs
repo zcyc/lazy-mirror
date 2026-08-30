@@ -159,6 +159,13 @@ pub fn probe_target(
     retries: u32,
     ip_version: IpVersion,
 ) -> io::Result<ProbeResult> {
+    let response_spec = crate::catalog::probe_spec(target);
+    if response_spec.suffix.is_empty() && crate::catalog::find(target).is_some() {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            format!("{target} has no safe protocol probe"),
+        ));
+    }
     let probe_url = target_url(target, url);
     let mut last_error = None;
     for _ in 0..=retries {
@@ -178,9 +185,25 @@ fn request(
 ) -> io::Result<ProbeResult> {
     let started = Instant::now();
     let response_spec = crate::catalog::probe_spec(target);
-    let body_path = (response_spec.response != crate::catalog::ProbeResponse::Any)
-        .then(temp_probe_body_path)
-        .transpose()?;
+    let body_path = (!matches!(
+        response_spec.response,
+        crate::catalog::ProbeResponse::Any
+            | crate::catalog::ProbeResponse::DockerRegistry
+            | crate::catalog::ProbeResponse::GitUploadPack
+    ))
+    .then(temp_probe_body_path)
+    .transpose()?;
+    let header_path = if response_spec.response == crate::catalog::ProbeResponse::DockerRegistry {
+        match temp_probe_body_path() {
+            Ok(path) => Some(path),
+            Err(error) => {
+                remove_probe_body(&body_path);
+                return Err(error);
+            }
+        }
+    } else {
+        None
+    };
     let output_path = body_path.as_ref().map_or_else(
         || {
             if cfg!(windows) {
@@ -196,6 +219,7 @@ fn request(
         "--location".to_owned(),
         "--silent".to_owned(),
         "--show-error".to_owned(),
+        "--compressed".to_owned(),
         "--connect-timeout".to_owned(),
         timeout.clone(),
         "--max-time".to_owned(),
@@ -207,11 +231,15 @@ fn request(
         "--write-out".to_owned(),
         "%{http_code}\t%{content_type}\t%{remote_ip}\t%{time_namelookup}\t%{time_connect}\t%{time_appconnect}\t%{time_starttransfer}".to_owned(),
     ];
-    if target != "go" {
-        args.extend(["--range".to_owned(), "0-65535".to_owned()]);
-    }
+    args.extend(["--range".to_owned(), "0-65535".to_owned()]);
     if body_path.is_some() {
         args.extend(["--max-filesize".to_owned(), "131072".to_owned()]);
+    }
+    if let Some(path) = &header_path {
+        args.extend([
+            "--dump-header".to_owned(),
+            path.to_string_lossy().into_owned(),
+        ]);
     }
     match ip_version {
         IpVersion::Any => {}
@@ -233,20 +261,20 @@ fn request(
         {
             Ok(child) => child,
             Err(error) => {
-                remove_probe_body(&body_path);
+                remove_probe_files(&body_path, &header_path);
                 return Err(error);
             }
         };
         if let Some(mut stdin) = child.stdin.take() {
             if let Err(error) = stdin.write_all(curl_config.as_bytes()) {
-                remove_probe_body(&body_path);
+                remove_probe_files(&body_path, &header_path);
                 return Err(error);
             }
         }
         match child.wait_with_output() {
             Ok(output) => output,
             Err(error) => {
-                remove_probe_body(&body_path);
+                remove_probe_files(&body_path, &header_path);
                 return Err(error);
             }
         }
@@ -254,13 +282,13 @@ fn request(
         match Command::new("curl").args(&args).output() {
             Ok(output) => output,
             Err(error) => {
-                remove_probe_body(&body_path);
+                remove_probe_files(&body_path, &header_path);
                 return Err(error);
             }
         }
     };
     if !output.status.success() {
-        remove_probe_body(&body_path);
+        remove_probe_files(&body_path, &header_path);
         let detail = redact_probe_text(String::from_utf8_lossy(&output.stderr).trim());
         return Err(io::Error::other(if detail.is_empty() {
             format!("curl exited with {}", output.status)
@@ -268,13 +296,8 @@ fn request(
             detail
         }));
     }
-    let body = if let Some(path) = body_path {
-        let body = fs::read(&path);
-        let _ = fs::remove_file(path);
-        body?
-    } else {
-        Vec::new()
-    };
+    let body = read_probe_file(&body_path)?;
+    let headers = read_probe_file(&header_path)?;
     let raw_metrics = parse_curl_metrics(String::from_utf8_lossy(&output.stdout).trim())?;
     if raw_metrics.code == "000" || raw_metrics.code.is_empty() {
         return Err(io::Error::other("mirror did not return an HTTP status"));
@@ -284,6 +307,7 @@ fn request(
         &raw_metrics.code,
         raw_metrics.content_type.as_deref(),
         &body,
+        &headers,
     );
     let state = response_error.as_ref().map_or_else(
         || classify(&raw_metrics.code),
@@ -378,6 +402,20 @@ fn remove_probe_body(path: &Option<PathBuf>) {
     }
 }
 
+fn remove_probe_files(body_path: &Option<PathBuf>, header_path: &Option<PathBuf>) {
+    remove_probe_body(body_path);
+    remove_probe_body(header_path);
+}
+
+fn read_probe_file(path: &Option<PathBuf>) -> io::Result<Vec<u8>> {
+    let Some(path) = path else {
+        return Ok(Vec::new());
+    };
+    let body = fs::read(path);
+    let _ = fs::remove_file(path);
+    body
+}
+
 fn curl_seconds_to_milliseconds(value: &str) -> io::Result<u128> {
     let value = value.parse::<f64>().map_err(|_| {
         io::Error::new(
@@ -399,37 +437,194 @@ fn protocol_response_error(
     code: &str,
     content_type: Option<&str>,
     body: &[u8],
+    headers: &[u8],
 ) -> Option<String> {
     let state = classify(code);
+    let response = crate::catalog::probe_spec(target).response;
+    if response == crate::catalog::ProbeResponse::DockerRegistry {
+        if matches!(state.as_str(), "healthy" | "auth-required")
+            && !has_docker_registry_header(headers)
+        {
+            return Some("endpoint did not identify as Docker Registry v2".to_owned());
+        }
+        return None;
+    }
     if state != "healthy" {
         return None;
     }
-    let response = crate::catalog::probe_spec(target).response;
-    if response == crate::catalog::ProbeResponse::Any {
-        return None;
+    match response {
+        crate::catalog::ProbeResponse::Any => None,
+        crate::catalog::ProbeResponse::JsonObject
+        | crate::catalog::ProbeResponse::JsonArray
+        | crate::catalog::ProbeResponse::JsonObjectWithKey(_) => {
+            let Some(content_type) = content_type else {
+                return Some("endpoint returned no content type for JSON response".to_owned());
+            };
+            if !content_type.to_ascii_lowercase().contains("json") {
+                return Some(format!(
+                    "endpoint returned an unexpected content type: {content_type}"
+                ));
+            }
+            let value = match serde_json::from_slice::<serde_json::Value>(body) {
+                Ok(value) => value,
+                Err(error) => return Some(format!("endpoint returned invalid JSON: {error}")),
+            };
+            let valid_shape = match response {
+                crate::catalog::ProbeResponse::JsonObject => value.is_object(),
+                crate::catalog::ProbeResponse::JsonArray => value.is_array(),
+                crate::catalog::ProbeResponse::JsonObjectWithKey(key) => value
+                    .as_object()
+                    .is_some_and(|value| value.contains_key(key)),
+                _ => false,
+            };
+            if valid_shape {
+                None
+            } else {
+                Some(format!(
+                    "endpoint returned JSON with an unexpected shape for {target}"
+                ))
+            }
+        }
+        crate::catalog::ProbeResponse::JsonContainsAll(signatures) => {
+            if !content_type.is_some_and(|value| value.to_ascii_lowercase().contains("json")) {
+                return Some(format!(
+                    "endpoint returned an unexpected content type: {}",
+                    content_type.unwrap_or("missing")
+                ));
+            }
+            let text = String::from_utf8_lossy(body);
+            if text.trim_start().starts_with('{')
+                && signatures.iter().all(|value| text.contains(value))
+            {
+                None
+            } else {
+                Some(format!(
+                    "endpoint returned JSON without the expected {target} signature"
+                ))
+            }
+        }
+        crate::catalog::ProbeResponse::TextStartsWith(prefix) => String::from_utf8_lossy(body)
+            .starts_with(prefix)
+            .then_some(())
+            .map_or_else(
+                || {
+                    Some(format!(
+                        "endpoint did not start with the expected {target} signature"
+                    ))
+                },
+                |_| None,
+            ),
+        crate::catalog::ProbeResponse::TextContains(signature) => String::from_utf8_lossy(body)
+            .contains(signature)
+            .then_some(())
+            .map_or_else(
+                || {
+                    Some(format!(
+                        "endpoint did not contain the expected {target} signature"
+                    ))
+                },
+                |_| None,
+            ),
+        crate::catalog::ProbeResponse::TextContainsAll(signatures) => {
+            let text = String::from_utf8_lossy(body);
+            signatures
+                .iter()
+                .all(|value| text.contains(value))
+                .then_some(())
+                .map_or_else(
+                    || {
+                        Some(format!(
+                            "endpoint did not contain the expected {target} signatures"
+                        ))
+                    },
+                    |_| None,
+                )
+        }
+        crate::catalog::ProbeResponse::NonEmpty => (!body.is_empty()).then_some(()).map_or_else(
+            || Some(format!("endpoint returned an empty {target} response")),
+            |_| None,
+        ),
+        crate::catalog::ProbeResponse::GoModuleVersions => {
+            if String::from_utf8_lossy(body)
+                .lines()
+                .any(valid_go_module_version)
+            {
+                None
+            } else {
+                Some("endpoint returned no valid Go module versions".to_owned())
+            }
+        }
+        crate::catalog::ProbeResponse::Sha256 => {
+            if valid_sha256_checksum(body) {
+                None
+            } else {
+                Some("endpoint did not return a valid Rustup checksum".to_owned())
+            }
+        }
+        crate::catalog::ProbeResponse::BinaryPrefix(prefix) => {
+            if body.starts_with(prefix) {
+                None
+            } else {
+                Some(format!(
+                    "endpoint did not contain the expected {target} binary signature"
+                ))
+            }
+        }
+        crate::catalog::ProbeResponse::GitUploadPack => {
+            let content_type_matches = content_type
+                .is_some_and(|value| value.to_ascii_lowercase().contains("git-upload-pack"));
+            let body_matches = body.starts_with(b"001e# service=git-upload-pack");
+            if content_type_matches || body_matches {
+                None
+            } else {
+                Some("endpoint did not identify as Git smart HTTP upload-pack".to_owned())
+            }
+        }
+        crate::catalog::ProbeResponse::DockerRegistry => None,
     }
-    if !content_type.is_some_and(|value| value.to_ascii_lowercase().contains("json")) {
-        return Some(format!(
-            "endpoint returned an unexpected content type: {}",
-            content_type.unwrap_or("missing")
-        ));
-    }
-    let value = match serde_json::from_slice::<serde_json::Value>(body) {
-        Ok(value) => value,
-        Err(error) => return Some(format!("endpoint returned invalid JSON: {error}")),
+}
+
+fn has_docker_registry_header(headers: &[u8]) -> bool {
+    String::from_utf8_lossy(headers).lines().any(|line| {
+        let Some((name, value)) = line.split_once(':') else {
+            return false;
+        };
+        name.eq_ignore_ascii_case("docker-distribution-api-version")
+            && value.trim().eq_ignore_ascii_case("registry/2.0")
+    })
+}
+
+fn valid_go_module_version(line: &str) -> bool {
+    let Some(version) = line.trim().strip_prefix('v') else {
+        return false;
     };
-    let valid_shape = match response {
-        crate::catalog::ProbeResponse::JsonObject => value.is_object(),
-        crate::catalog::ProbeResponse::JsonArray => value.is_array(),
-        crate::catalog::ProbeResponse::Any => true,
-    };
-    if valid_shape {
-        None
-    } else {
-        Some(format!(
-            "endpoint returned JSON with an unexpected shape for {target}"
-        ))
+    let mut dots = 0;
+    let mut digits = 0;
+    for character in version.chars() {
+        match character {
+            '.' => dots += 1,
+            '-' | '+' => break,
+            character if character.is_ascii_digit() => digits += 1,
+            _ => return false,
+        }
     }
+    dots >= 2 && digits > 0
+}
+
+fn valid_sha256_checksum(body: &[u8]) -> bool {
+    let text = String::from_utf8_lossy(body);
+    let mut fields = text.split_whitespace();
+    let Some(checksum) = fields.next() else {
+        return false;
+    };
+    let Some(filename) = fields.next() else {
+        return false;
+    };
+    checksum.len() == 64
+        && checksum
+            .chars()
+            .all(|character| character.is_ascii_hexdigit())
+        && filename == "channel-rust-stable.toml"
 }
 
 fn protocol_detail(state: &str, content_type: Option<&str>) -> String {
@@ -550,12 +745,16 @@ fn target_url(target: &str, url: &str) -> String {
 }
 
 fn cache_key(target: &str, url: &str, ip_version: IpVersion) -> String {
+    let probe = crate::catalog::probe_spec(target);
     let ip_version = match ip_version {
         IpVersion::Any => "any",
         IpVersion::V4 => "ipv4",
         IpVersion::V6 => "ipv6",
     };
-    format!("{target}\n{ip_version}\n{url}")
+    format!(
+        "v2:{target}:{}:{:?}\n{ip_version}\n{url}",
+        probe.suffix, probe.response
+    )
 }
 
 fn cacheable_url(url: &str) -> bool {
@@ -703,21 +902,99 @@ mod tests {
         assert_eq!(classify("429"), "rate-limited");
         assert_eq!(classify("404"), "unsupported");
         assert_eq!(
-            protocol_response_error("huggingface", "200", Some("text/html"), b"[]").as_deref(),
+            protocol_response_error("huggingface", "200", Some("text/html"), b"[]", &[]).as_deref(),
             Some("endpoint returned an unexpected content type: text/html")
         );
+        assert!(protocol_response_error(
+            "huggingface",
+            "200",
+            Some("application/json"),
+            b"[]",
+            &[]
+        )
+        .is_none());
+        assert!(protocol_response_error(
+            "huggingface",
+            "200",
+            Some("application/json"),
+            b"{}",
+            &[]
+        )
+        .is_some());
+        assert!(protocol_response_error(
+            "nuget",
+            "200",
+            Some("application/json"),
+            b"not-json",
+            &[]
+        )
+        .is_some());
+    }
+
+    #[test]
+    fn protocol_checks_reject_valid_http_with_wrong_payload() {
         assert!(
-            protocol_response_error("huggingface", "200", Some("application/json"), b"[]")
-                .is_none()
-        );
-        assert!(
-            protocol_response_error("huggingface", "200", Some("application/json"), b"{}")
+            protocol_response_error("go", "200", Some("text/plain"), b"not-a-version", &[])
                 .is_some()
         );
         assert!(
-            protocol_response_error("nuget", "200", Some("application/json"), b"not-json")
-                .is_some()
+            protocol_response_error("cargo", "200", Some("application/json"), b"{}", &[]).is_some()
         );
+        assert!(protocol_response_error(
+            "gem",
+            "200",
+            Some("application/octet-stream"),
+            b"html",
+            &[]
+        )
+        .is_some());
+        assert!(
+            protocol_response_error("nvm", "200", Some("text/plain"), b"<html>", &[]).is_some()
+        );
+    }
+
+    #[test]
+    fn protocol_checks_accept_protocol_signatures() {
+        assert!(
+            protocol_response_error("go", "200", Some("text/plain"), b"v1.2.3\n", &[]).is_none()
+        );
+        assert!(protocol_response_error(
+            "docker",
+            "401",
+            Some("application/json"),
+            b"",
+            b"Docker-Distribution-Api-Version: registry/2.0\r\n"
+        )
+        .is_none());
+        assert!(protocol_response_error(
+            "cocoapods",
+            "200",
+            Some("application/x-git-upload-pack-advertisement"),
+            b"",
+            &[]
+        )
+        .is_none());
+        assert!(protocol_response_error(
+            "apk",
+            "206",
+            Some("application/octet-stream"),
+            b"\x1f\x8bpayload",
+            &[]
+        )
+        .is_none());
+        assert!(valid_sha256_checksum(
+            b"0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef  channel-rust-stable.toml\n"
+        ));
+        assert!(!valid_sha256_checksum(
+            b"not-a-checksum  channel-rust-stable.toml\n"
+        ));
+    }
+
+    #[test]
+    fn known_targets_without_protocol_probes_fail_closed() {
+        let error = probe_target("julia", "https://mirror.example", 1, 0, IpVersion::Any)
+            .expect_err("Julia must not fall back to a root HTTP status probe");
+        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
     }
 
     #[test]

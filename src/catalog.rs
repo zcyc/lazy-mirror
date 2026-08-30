@@ -21,6 +21,17 @@ pub enum ProbeResponse {
     Any,
     JsonObject,
     JsonArray,
+    JsonObjectWithKey(&'static str),
+    JsonContainsAll(&'static [&'static str]),
+    TextStartsWith(&'static str),
+    TextContains(&'static str),
+    TextContainsAll(&'static [&'static str]),
+    NonEmpty,
+    GoModuleVersions,
+    Sha256,
+    BinaryPrefix(&'static [u8]),
+    GitUploadPack,
+    DockerRegistry,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -28,6 +39,10 @@ pub struct ProbeSpec {
     pub suffix: &'static str,
     pub response: ProbeResponse,
 }
+
+const APT_SIGNATURES: &[&str] = &["Origin:", "Suite:", "Components:"];
+const CONDA_SIGNATURES: &[&str] = &["\"info\"", "\"subdir\"", "\"packages\""];
+const NIX_SIGNATURES: &[&str] = &["StoreDir: /nix/store", "WantMassQuery:"];
 
 const NODE: &[MirrorSpec] = &[
     MirrorSpec {
@@ -832,46 +847,93 @@ pub fn find(name: &str) -> Option<&'static TargetSpec> {
 
 pub fn probe_spec(target: &str) -> ProbeSpec {
     let (suffix, response) = match target {
-        "apt" | "ros" => ("/dists/{distribution}/Release", ProbeResponse::Any),
+        "apt" | "ros" => (
+            "/dists/{distribution}/Release",
+            ProbeResponse::TextContainsAll(APT_SIGNATURES),
+        ),
         "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::JsonObject),
-        "pip" | "uv" | "pdm" | "poetry" => ("/simple/pip/", ProbeResponse::Any),
-        "go" => ("/github.com/stretchr/testify/@v/list", ProbeResponse::Any),
-        "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
-        "composer" => ("/packages.json", ProbeResponse::Any),
-        "gem" | "bundle" => ("/specs.4.8.gz", ProbeResponse::Any),
+        "pip" | "uv" | "pdm" | "poetry" => ("/simple/pip/", ProbeResponse::TextContains("pip")),
+        "go" => (
+            "/github.com/stretchr/testify/@v/list",
+            ProbeResponse::GoModuleVersions,
+        ),
+        "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::DockerRegistry),
+        "composer" => (
+            "/packages.json",
+            ProbeResponse::JsonObjectWithKey("packages"),
+        ),
+        "gem" | "bundle" => ("/specs.4.8.gz", ProbeResponse::BinaryPrefix(&[0x1f, 0x8b])),
         "maven" | "gradle" | "sbt" => (
             "/org/apache/maven/maven-core/maven-metadata.xml",
-            ProbeResponse::Any,
+            ProbeResponse::TextContains("<metadata"),
         ),
-        "cargo" => ("/config.json", ProbeResponse::JsonObject),
-        "helm" => ("/index.yaml", ProbeResponse::Any),
-        "conda" => ("/pkgs/main/linux-64/repodata.json", ProbeResponse::Any),
-        "dart" => ("/api/packages/http", ProbeResponse::Any),
+        "cargo" => ("/config.json", ProbeResponse::JsonObjectWithKey("dl")),
+        "helm" => ("/index.yaml", ProbeResponse::TextContains("apiVersion:")),
+        "conda" => (
+            "/pkgs/main/linux-64/repodata.json",
+            ProbeResponse::JsonContainsAll(CONDA_SIGNATURES),
+        ),
+        "dart" => (
+            "/api/packages/http",
+            ProbeResponse::JsonContainsAll(&["\"name\"", "http"]),
+        ),
         "flutter" => (
             "/flutter_infra_release/releases/stable/linux/flutter_linux_3.35.5-stable.tar.xz",
-            ProbeResponse::Any,
+            ProbeResponse::BinaryPrefix(&[0xfd, 0x37, 0x7a, 0x58, 0x5a, 0x00]),
         ),
-        "cran" => ("/src/contrib/PACKAGES", ProbeResponse::Any),
+        "cran" => (
+            "/src/contrib/PACKAGES",
+            ProbeResponse::TextContains("Package:"),
+        ),
         "huggingface" => ("/api/models?limit=1", ProbeResponse::JsonArray),
-        "nuget" => ("/v3/index.json", ProbeResponse::JsonObject),
+        "nuget" => (
+            "/v3/index.json",
+            ProbeResponse::JsonObjectWithKey("resources"),
+        ),
         "apk" => (
             "/latest-stable/main/x86_64/APKINDEX.tar.gz",
-            ProbeResponse::Any,
+            ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
         ),
-        "rustup" => ("/dist/channel-rust-stable.toml", ProbeResponse::Any),
-        "nvm" => ("/index.tab", ProbeResponse::Any),
-        "cpan" => ("/modules/02packages.details.txt.gz", ProbeResponse::Any),
-        "luarocks" => ("/manifest", ProbeResponse::Any),
-        "hackage" | "cabal" | "stack" => ("/01-index.tar.gz", ProbeResponse::Any),
+        "rustup" => (
+            "/dist/channel-rust-stable.toml.sha256",
+            ProbeResponse::Sha256,
+        ),
+        "nvm" => (
+            "/index.tab",
+            ProbeResponse::TextStartsWith("version\tdate\tfiles\t"),
+        ),
+        "cpan" => (
+            "/modules/02packages.details.txt.gz",
+            ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
+        ),
+        "luarocks" => ("/manifest", ProbeResponse::TextContains("repository")),
+        "haskell" | "hackage" | "cabal" | "stack" => (
+            "/01-index.tar.gz",
+            ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
+        ),
         "clojure" => (
             "/ring/ring-core/1.12.2/ring-core-1.12.2.pom",
-            ProbeResponse::Any,
+            ProbeResponse::TextContains("<project"),
         ),
-        "cocoapods" => ("/info/refs?service=git-upload-pack", ProbeResponse::Any),
-        "flathub" => ("/summary.idx", ProbeResponse::Any),
-        "nix" => ("/nix-cache-info", ProbeResponse::Any),
-        "emacs" => ("/archive-contents", ProbeResponse::Any),
-        "tex" => ("/tlpkg/texlive.tlpdb", ProbeResponse::Any),
+        "cocoapods" => (
+            "/info/refs?service=git-upload-pack",
+            ProbeResponse::GitUploadPack,
+        ),
+        "flathub" => ("/summary.idx", ProbeResponse::NonEmpty),
+        "nix" => (
+            "/nix-cache-info",
+            ProbeResponse::TextContainsAll(NIX_SIGNATURES),
+        ),
+        "emacs" => ("/archive-contents", ProbeResponse::TextStartsWith("(1\n")),
+        "tex" => (
+            "/tlpkg/texlive.tlpdb",
+            ProbeResponse::TextStartsWith("name "),
+        ),
+        "brew" => (
+            "/git/homebrew/brew.git/info/refs?service=git-upload-pack",
+            ProbeResponse::GitUploadPack,
+        ),
+        "winget" => ("/source.msix", ProbeResponse::BinaryPrefix(b"PK\x03\x04")),
         _ => ("", ProbeResponse::Any),
     };
     ProbeSpec { suffix, response }
@@ -1045,9 +1107,21 @@ mod tests {
             probe_spec("pip"),
             ProbeSpec {
                 suffix: "/simple/pip/",
-                response: ProbeResponse::Any,
+                response: ProbeResponse::TextContains("pip"),
             }
         );
         assert_eq!(probe_spec("unknown").suffix, "");
+    }
+
+    #[test]
+    fn built_in_targets_have_protocol_checks() {
+        for target in targets().iter().filter(|target| !target.mirrors.is_empty()) {
+            assert_ne!(
+                probe_spec(target.name).response,
+                ProbeResponse::Any,
+                "{} has only an HTTP status probe",
+                target.name
+            );
+        }
     }
 }
