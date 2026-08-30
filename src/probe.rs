@@ -660,7 +660,7 @@ mod tests {
         );
         assert_eq!(
             target_url("go", "https://proxy.example,direct"),
-            "https://proxy.example/github.com/golang/go/@v/list"
+            "https://proxy.example/github.com/stretchr/testify/@v/list"
         );
         assert_eq!(
             target_url("pip", "https://pypi.example/simple"),

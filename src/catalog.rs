@@ -91,6 +91,10 @@ const GO: &[MirrorSpec] = &[
         url: "https://goproxy.io,direct",
     },
     MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/goproxy/,direct",
+    },
+    MirrorSpec {
         name: "tencent",
         url: "https://mirrors.tencent.com/go,direct",
     },
@@ -831,7 +835,7 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
         "apt" | "ros" => ("/dists/{distribution}/Release", ProbeResponse::Any),
         "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::JsonObject),
         "pip" | "uv" | "pdm" | "poetry" => ("/simple/pip/", ProbeResponse::Any),
-        "go" => ("/github.com/golang/go/@v/list", ProbeResponse::Any),
+        "go" => ("/github.com/stretchr/testify/@v/list", ProbeResponse::Any),
         "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
         "composer" => ("/packages.json", ProbeResponse::Any),
         "gem" | "bundle" => ("/specs.4.8.gz", ProbeResponse::Any),
