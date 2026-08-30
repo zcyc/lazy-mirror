@@ -169,7 +169,7 @@ pub fn clojure_set(mirror: &str, scope: Scope) -> io::Result<()> {
     crate::write_with_backup_if(
         &path,
         &format!(
-            ";; managed by lazy-mirror\n{{:mvn/repos {{:central {{:url \"{mirror}\"}} :clojars {{:url \"{mirror}\"}}}}}}\n"
+            ";; managed by lazy-mirror\n{{:mvn/repos {{:central {{:url \"https://repo.maven.apache.org/maven2/\"}} :clojars {{:url \"{mirror}\"}}}}}}\n"
         ),
         |content| content.starts_with(";; managed by lazy-mirror\n"),
     )
@@ -198,7 +198,7 @@ pub fn clojure_status(expected: &str, scope: Scope) -> io::Result<crate::ToolSta
     let path = config_path("clojure", scope)?;
     file_status("clojure", &path, expected, |content| {
         content
-            .split_once(":central {:url \"")
+            .split_once(":clojars {:url \"")
             .and_then(|(_, value)| value.split_once('"').map(|(value, _)| value.to_owned()))
     })
 }

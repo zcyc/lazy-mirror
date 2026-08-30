@@ -55,6 +55,28 @@ const NODE: &[MirrorSpec] = &[
         url: "https://repo.huaweicloud.com/repository/npm/",
     },
 ];
+const NVM: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/nodejs-release/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/node/",
+    },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/nodejs-release/",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/nodejs-release/",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/nodejs/",
+    },
+];
 const GO: &[MirrorSpec] = &[
     MirrorSpec {
         name: "golangcn",
@@ -63,10 +85,6 @@ const GO: &[MirrorSpec] = &[
     MirrorSpec {
         name: "goproxy",
         url: "https://goproxy.cn,direct",
-    },
-    MirrorSpec {
-        name: "aliyun",
-        url: "https://mirrors.aliyun.com/goproxy/",
     },
     MirrorSpec {
         name: "goproxyio",
@@ -110,6 +128,14 @@ const PYPI: &[MirrorSpec] = &[
         name: "huawei",
         url: "https://repo.huaweicloud.com/repository/pypi/simple/",
     },
+    MirrorSpec {
+        name: "volcengine",
+        url: "https://mirrors.volces.com/pypi/simple/",
+    },
+    MirrorSpec {
+        name: "pku",
+        url: "https://mirrors.pku.edu.cn/pypi/web/simple/",
+    },
 ];
 const COMPOSER: &[MirrorSpec] = &[
     MirrorSpec {
@@ -137,6 +163,14 @@ const RUBYGEMS: &[MirrorSpec] = &[
     MirrorSpec {
         name: "huawei",
         url: "https://repo.huaweicloud.com/repository/rubygems/",
+    },
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/rubygems/",
+    },
+    MirrorSpec {
+        name: "nju",
+        url: "https://mirror.nju.edu.cn/rubygems/",
     },
 ];
 const JAVA: &[MirrorSpec] = &[
@@ -173,6 +207,10 @@ const CARGO: &[MirrorSpec] = &[
     MirrorSpec {
         name: "aliyun",
         url: "https://mirrors.aliyun.com/crates.io-index/",
+    },
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/crates.io-index/",
     },
 ];
 const DOCKER: &[MirrorSpec] = &[MirrorSpec {
@@ -248,6 +286,18 @@ const APT: &[MirrorSpec] = &[
         name: "ustc",
         url: "https://mirrors.ustc.edu.cn/debian",
     },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/debian",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/debian",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/debian",
+    },
 ];
 const APK: &[MirrorSpec] = &[
     MirrorSpec {
@@ -258,15 +308,45 @@ const APK: &[MirrorSpec] = &[
         name: "ustc",
         url: "https://mirrors.ustc.edu.cn/alpine",
     },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/alpine",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/alpine",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/alpine",
+    },
 ];
 const HOMEBREW: &[MirrorSpec] = &[MirrorSpec {
     name: "tuna",
     url: "https://mirrors.tuna.tsinghua.edu.cn",
 }];
-const RUSTUP: &[MirrorSpec] = &[MirrorSpec {
-    name: "rsproxy",
-    url: "https://rsproxy.cn",
-}];
+const RUSTUP: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "rsproxy",
+        url: "https://rsproxy.cn",
+    },
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/rustup",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/rust-static",
+    },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirror.sjtu.edu.cn/rust-static",
+    },
+    MirrorSpec {
+        name: "zju",
+        url: "https://mirrors.zju.edu.cn/rustup",
+    },
+];
 const JULIA: &[MirrorSpec] = &[];
 const CPAN: &[MirrorSpec] = &[
     MirrorSpec {
@@ -278,6 +358,74 @@ const CPAN: &[MirrorSpec] = &[
         url: "https://mirrors.ustc.edu.cn/CPAN/",
     },
 ];
+const HASKELL: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/hackage/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/hackage/",
+    },
+];
+const CLOJURE: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/clojars/",
+}];
+const COCOAPODS: &[MirrorSpec] = &[MirrorSpec {
+    name: "tuna",
+    url: "https://mirrors.tuna.tsinghua.edu.cn/git/CocoaPods/Specs.git",
+}];
+const FLATHUB: &[MirrorSpec] = &[MirrorSpec {
+    name: "ustc",
+    url: "https://mirrors.ustc.edu.cn/flathub",
+}];
+const NIX: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/nix-channels/store",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/nix-channels/store",
+    },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirrors.sjtug.sjtu.edu.cn/nix-channels/store",
+    },
+];
+const EMACS: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/elpa/gnu/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/elpa/gnu/",
+    },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirrors.sjtug.sjtu.edu.cn/emacs-elpa/gnu/",
+    },
+];
+const TEX: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/CTAN/systems/texlive/tlnet/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/CTAN/systems/texlive/tlnet/",
+    },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirrors.sjtug.sjtu.edu.cn/ctan/systems/texlive/tlnet/",
+    },
+];
+const WINGET: &[MirrorSpec] = &[MirrorSpec {
+    name: "ustc",
+    url: "https://mirrors.ustc.edu.cn/winget-source",
+}];
 const EMPTY: &[MirrorSpec] = &[];
 
 const TARGETS: &[TargetSpec] = &[
@@ -454,7 +602,7 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "winget",
         aliases: &[],
-        mirrors: EMPTY,
+        mirrors: WINGET,
     },
     TargetSpec {
         name: "opam",
@@ -469,7 +617,7 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "nvm",
         aliases: &[],
-        mirrors: EMPTY,
+        mirrors: NVM,
     },
     TargetSpec {
         name: "luarocks",
@@ -479,22 +627,22 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "clojure",
         aliases: &["clojars"],
-        mirrors: EMPTY,
+        mirrors: CLOJURE,
     },
     TargetSpec {
         name: "haskell",
         aliases: &["hackage"],
-        mirrors: EMPTY,
+        mirrors: HASKELL,
     },
     TargetSpec {
         name: "cabal",
         aliases: &[],
-        mirrors: EMPTY,
+        mirrors: HASKELL,
     },
     TargetSpec {
         name: "stack",
         aliases: &[],
-        mirrors: EMPTY,
+        mirrors: HASKELL,
     },
     TargetSpec {
         name: "ocaml",
@@ -504,17 +652,17 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "cocoapods",
         aliases: &["cocoa", "pod"],
-        mirrors: EMPTY,
+        mirrors: COCOAPODS,
     },
     TargetSpec {
         name: "flathub",
         aliases: &["flatpak"],
-        mirrors: EMPTY,
+        mirrors: FLATHUB,
     },
     TargetSpec {
         name: "nix",
         aliases: &[],
-        mirrors: EMPTY,
+        mirrors: NIX,
     },
     TargetSpec {
         name: "guix",
@@ -524,12 +672,12 @@ const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "emacs",
         aliases: &["elpa"],
-        mirrors: EMPTY,
+        mirrors: EMACS,
     },
     TargetSpec {
         name: "tex",
         aliases: &["ctan", "latex", "texlive", "miktex"],
-        mirrors: EMPTY,
+        mirrors: TEX,
     },
     TargetSpec {
         name: "linuxmint",
@@ -707,10 +855,19 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
             ProbeResponse::Any,
         ),
         "rustup" => ("/dist/channel-rust-stable.toml", ProbeResponse::Any),
+        "nvm" => ("/index.tab", ProbeResponse::Any),
         "cpan" => ("/modules/02packages.details.txt.gz", ProbeResponse::Any),
         "luarocks" => ("/manifest", ProbeResponse::Any),
         "hackage" | "cabal" | "stack" => ("/01-index.tar.gz", ProbeResponse::Any),
-        "flathub" => ("/summary", ProbeResponse::Any),
+        "clojure" => (
+            "/ring/ring-core/1.12.2/ring-core-1.12.2.pom",
+            ProbeResponse::Any,
+        ),
+        "cocoapods" => ("/info/refs?service=git-upload-pack", ProbeResponse::Any),
+        "flathub" => ("/summary.idx", ProbeResponse::Any),
+        "nix" => ("/nix-cache-info", ProbeResponse::Any),
+        "emacs" => ("/archive-contents", ProbeResponse::Any),
+        "tex" => ("/tlpkg/texlive.tlpdb", ProbeResponse::Any),
         _ => ("", ProbeResponse::Any),
     };
     ProbeSpec { suffix, response }
