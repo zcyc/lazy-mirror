@@ -48,18 +48,18 @@ const NODE: &[MirrorSpec] = &[
     },
     MirrorSpec {
         name: "tencent",
-        url: "https://mirrors.cloud.tencent.com/npm/",
+        url: "https://mirrors.tencent.com/npm/",
     },
     MirrorSpec {
-        name: "npmMirror",
-        url: "https://replicate.npmjs.com/registry/",
-    },
-    MirrorSpec {
-        name: "github",
-        url: "https://npm.pkg.github.com/",
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/npm/",
     },
 ];
 const GO: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "golangcn",
+        url: "https://proxy.golang.com.cn,direct",
+    },
     MirrorSpec {
         name: "goproxy",
         url: "https://goproxy.cn,direct",
@@ -72,6 +72,10 @@ const GO: &[MirrorSpec] = &[
         name: "goproxyio",
         url: "https://goproxy.io,direct",
     },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.tencent.com/go,direct",
+    },
 ];
 const PYPI: &[MirrorSpec] = &[
     MirrorSpec {
@@ -80,7 +84,7 @@ const PYPI: &[MirrorSpec] = &[
     },
     MirrorSpec {
         name: "ustc",
-        url: "https://pypi.mirrors.ustc.edu.cn/simple",
+        url: "https://mirrors.ustc.edu.cn/pypi/simple",
     },
     MirrorSpec {
         name: "aliyun",
@@ -90,19 +94,49 @@ const PYPI: &[MirrorSpec] = &[
         name: "bfsu",
         url: "https://mirrors.bfsu.edu.cn/pypi/web/simple",
     },
-];
-const COMPOSER: &[MirrorSpec] = &[MirrorSpec {
-    name: "aliyun",
-    url: "https://mirrors.aliyun.com/composer/",
-}];
-const RUBYGEMS: &[MirrorSpec] = &[
     MirrorSpec {
-        name: "ruby-china",
-        url: "https://gems.ruby-china.com",
+        name: "tencent",
+        url: "https://mirrors.tencent.com/pypi/simple/",
     },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirror.sjtu.edu.cn/pypi/web/simple/",
+    },
+    MirrorSpec {
+        name: "zju",
+        url: "https://mirrors.zju.edu.cn/pypi/web/simple/",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/pypi/simple/",
+    },
+];
+const COMPOSER: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/composer/",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/php/",
+    },
+];
+const RUBYGEMS: &[MirrorSpec] = &[
     MirrorSpec {
         name: "aliyun",
         url: "https://mirrors.aliyun.com/rubygems/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/rubygems/",
+    },
+    MirrorSpec {
+        name: "tencent",
+        url: "https://mirrors.cloud.tencent.com/rubygems/",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/rubygems/",
     },
 ];
 const JAVA: &[MirrorSpec] = &[
@@ -112,11 +146,19 @@ const JAVA: &[MirrorSpec] = &[
     },
     MirrorSpec {
         name: "tencent",
-        url: "https://mirrors.cloud.tencent.com/repository/maven-public/",
+        url: "https://mirrors.tencent.com/nexus/repository/maven-public/",
     },
     MirrorSpec {
         name: "huawei",
         url: "https://repo.huaweicloud.com/repository/maven/",
+    },
+    MirrorSpec {
+        name: "sjtu",
+        url: "https://mirrors.sjtug.sjtu.edu.cn/maven-central/",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://maven.proxy.ustclug.org/maven2/",
     },
 ];
 const CARGO: &[MirrorSpec] = &[
@@ -127,6 +169,10 @@ const CARGO: &[MirrorSpec] = &[
     MirrorSpec {
         name: "ustc",
         url: "https://mirrors.ustc.edu.cn/crates.io-index/",
+    },
+    MirrorSpec {
+        name: "aliyun",
+        url: "https://mirrors.aliyun.com/crates.io-index/",
     },
 ];
 const DOCKER: &[MirrorSpec] = &[MirrorSpec {
@@ -142,7 +188,19 @@ const CONDA: &[MirrorSpec] = &[
         name: "ustc",
         url: "https://mirrors.ustc.edu.cn/anaconda",
     },
+    MirrorSpec {
+        name: "nju",
+        url: "https://mirrors.nju.edu.cn/anaconda",
+    },
+    MirrorSpec {
+        name: "huawei",
+        url: "https://repo.huaweicloud.com/repository/conda",
+    },
 ];
+const NUGET: &[MirrorSpec] = &[MirrorSpec {
+    name: "huawei",
+    url: "https://repo.huaweicloud.com/repository/nuget/",
+}];
 const DART: &[MirrorSpec] = &[
     MirrorSpec {
         name: "sjtu",
@@ -161,10 +219,6 @@ const FLUTTER: &[MirrorSpec] = &[
     MirrorSpec {
         name: "sjtu",
         url: "https://mirror.sjtu.edu.cn",
-    },
-    MirrorSpec {
-        name: "tuna",
-        url: "https://mirrors.tuna.tsinghua.edu.cn/flutter",
     },
     MirrorSpec {
         name: "flutter-io",
@@ -195,10 +249,16 @@ const APT: &[MirrorSpec] = &[
         url: "https://mirrors.ustc.edu.cn/debian",
     },
 ];
-const APK: &[MirrorSpec] = &[MirrorSpec {
-    name: "tuna",
-    url: "https://mirrors.tuna.tsinghua.edu.cn/alpine",
-}];
+const APK: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/alpine",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/alpine",
+    },
+];
 const HOMEBREW: &[MirrorSpec] = &[MirrorSpec {
     name: "tuna",
     url: "https://mirrors.tuna.tsinghua.edu.cn",
@@ -207,14 +267,17 @@ const RUSTUP: &[MirrorSpec] = &[MirrorSpec {
     name: "rsproxy",
     url: "https://rsproxy.cn",
 }];
-const JULIA: &[MirrorSpec] = &[MirrorSpec {
-    name: "tuna",
-    url: "https://mirrors.tuna.tsinghua.edu.cn/julia",
-}];
-const CPAN: &[MirrorSpec] = &[MirrorSpec {
-    name: "tuna",
-    url: "https://mirrors.tuna.tsinghua.edu.cn/CPAN",
-}];
+const JULIA: &[MirrorSpec] = &[];
+const CPAN: &[MirrorSpec] = &[
+    MirrorSpec {
+        name: "tuna",
+        url: "https://mirrors.tuna.tsinghua.edu.cn/CPAN",
+    },
+    MirrorSpec {
+        name: "ustc",
+        url: "https://mirrors.ustc.edu.cn/CPAN/",
+    },
+];
 const EMPTY: &[MirrorSpec] = &[];
 
 const TARGETS: &[TargetSpec] = &[
@@ -327,6 +390,11 @@ const TARGETS: &[TargetSpec] = &[
         name: "conda",
         aliases: &["mamba", "anaconda"],
         mirrors: CONDA,
+    },
+    TargetSpec {
+        name: "nuget",
+        aliases: &["dotnet"],
+        mirrors: NUGET,
     },
     TargetSpec {
         name: "dart",
@@ -598,11 +666,6 @@ const TARGETS: &[TargetSpec] = &[
         aliases: &[],
         mirrors: EMPTY,
     },
-    TargetSpec {
-        name: "nuget",
-        aliases: &["dotnet"],
-        mirrors: EMPTY,
-    },
 ];
 
 pub fn targets() -> &'static [TargetSpec] {
@@ -619,10 +682,23 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
     let (suffix, response) = match target {
         "apt" | "ros" => ("/dists/{distribution}/Release", ProbeResponse::Any),
         "npm" | "pnpm" | "yarn" | "bun" => ("/-/ping", ProbeResponse::JsonObject),
-        "pip" | "uv" | "pdm" | "poetry" => ("/simple/", ProbeResponse::Any),
+        "pip" | "uv" | "pdm" | "poetry" => ("/simple/pip/", ProbeResponse::Any),
+        "go" => ("/github.com/golang/go/@v/list", ProbeResponse::Any),
         "docker" | "buildkit" | "containerd" | "podman" => ("/v2/", ProbeResponse::Any),
+        "composer" => ("/packages.json", ProbeResponse::Any),
+        "gem" | "bundle" => ("/specs.4.8.gz", ProbeResponse::Any),
+        "maven" | "gradle" | "sbt" => (
+            "/org/apache/maven/maven-core/maven-metadata.xml",
+            ProbeResponse::Any,
+        ),
+        "cargo" => ("/config.json", ProbeResponse::JsonObject),
         "helm" => ("/index.yaml", ProbeResponse::Any),
-        "conda" => ("/pkgs/main/repodata.json", ProbeResponse::JsonObject),
+        "conda" => ("/pkgs/main/linux-64/repodata.json", ProbeResponse::Any),
+        "dart" => ("/api/packages/http", ProbeResponse::Any),
+        "flutter" => (
+            "/flutter_infra_release/releases/stable/linux/flutter_linux_3.35.5-stable.tar.xz",
+            ProbeResponse::Any,
+        ),
         "cran" => ("/src/contrib/PACKAGES", ProbeResponse::Any),
         "huggingface" => ("/api/models?limit=1", ProbeResponse::JsonArray),
         "nuget" => ("/v3/index.json", ProbeResponse::JsonObject),
@@ -807,7 +883,7 @@ mod tests {
         assert_eq!(
             probe_spec("pip"),
             ProbeSpec {
-                suffix: "/simple/",
+                suffix: "/simple/pip/",
                 response: ProbeResponse::Any,
             }
         );

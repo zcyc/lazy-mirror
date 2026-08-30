@@ -88,12 +88,7 @@ fn env_value(content: &str, variable: &str) -> Option<String> {
 pub fn flutter_urls(mirror: &str) -> (String, String) {
     let mirror = mirror.trim_end_matches('/');
     if let Some(base) = mirror.strip_suffix("/dart-pub") {
-        let storage = if base == "https://mirrors.tuna.tsinghua.edu.cn" {
-            format!("{base}/flutter")
-        } else {
-            base.to_owned()
-        };
-        return (mirror.to_owned(), storage);
+        return (mirror.to_owned(), base.to_owned());
     }
     if let Some(base) = mirror.strip_suffix("/flutter") {
         return (format!("{base}/dart-pub"), mirror.to_owned());
@@ -171,13 +166,6 @@ mod tests {
             (
                 "https://mirror.sjtu.edu.cn/dart-pub".to_owned(),
                 "https://mirror.sjtu.edu.cn".to_owned()
-            )
-        );
-        assert_eq!(
-            flutter_urls("https://mirrors.tuna.tsinghua.edu.cn/dart-pub"),
-            (
-                "https://mirrors.tuna.tsinghua.edu.cn/dart-pub".to_owned(),
-                "https://mirrors.tuna.tsinghua.edu.cn/flutter".to_owned()
             )
         );
     }

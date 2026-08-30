@@ -207,13 +207,11 @@ fn request(
         "--write-out".to_owned(),
         "%{http_code}\t%{content_type}\t%{remote_ip}\t%{time_namelookup}\t%{time_connect}\t%{time_appconnect}\t%{time_starttransfer}".to_owned(),
     ];
+    if target != "go" {
+        args.extend(["--range".to_owned(), "0-65535".to_owned()]);
+    }
     if body_path.is_some() {
-        args.extend([
-            "--max-filesize".to_owned(),
-            "131072".to_owned(),
-            "--range".to_owned(),
-            "0-65535".to_owned(),
-        ]);
+        args.extend(["--max-filesize".to_owned(), "131072".to_owned()]);
     }
     match ip_version {
         IpVersion::Any => {}
@@ -525,10 +523,14 @@ fn target_url(target: &str, url: &str) -> String {
     } else {
         crate::platform::apt_distribution()
     };
-    let suffix = probe.suffix.replace("{distribution}", &distribution);
     let query_start = url.find(['?', '#']).unwrap_or(url.len());
     let (base, query) = url.split_at(query_start);
     let base = base.trim_end_matches('/');
+    let suffix = if matches!(target, "pip" | "uv" | "pdm" | "poetry") && base.ends_with("/simple") {
+        "/pip/".to_owned()
+    } else {
+        probe.suffix.replace("{distribution}", &distribution)
+    };
     let suffix_query_start = suffix.find(['?', '#']).unwrap_or(suffix.len());
     let (suffix_path, suffix_query) = suffix.split_at(suffix_query_start);
     let path = if suffix_path.is_empty() || base.ends_with(suffix_path.trim_end_matches('/')) {
@@ -657,8 +659,24 @@ mod tests {
             "https://registry.example/v2/"
         );
         assert_eq!(
+            target_url("go", "https://proxy.example,direct"),
+            "https://proxy.example/github.com/golang/go/@v/list"
+        );
+        assert_eq!(
             target_url("pip", "https://pypi.example/simple"),
-            "https://pypi.example/simple"
+            "https://pypi.example/simple/pip/"
+        );
+        assert_eq!(
+            target_url("composer", "https://packagist.example"),
+            "https://packagist.example/packages.json"
+        );
+        assert_eq!(
+            target_url("maven", "https://maven.example/repository/public"),
+            "https://maven.example/repository/public/org/apache/maven/maven-core/maven-metadata.xml"
+        );
+        assert_eq!(
+            target_url("cargo", "sparse+https://cargo.example/index/"),
+            "https://cargo.example/index/config.json"
         );
         assert_eq!(
             target_url("huggingface", "https://hf.example"),
@@ -666,7 +684,7 @@ mod tests {
         );
         assert_eq!(
             target_url("pip", "https://pypi.example/simple?token=secret"),
-            "https://pypi.example/simple?token=secret"
+            "https://pypi.example/simple/pip/?token=secret"
         );
         assert_eq!(
             target_url("huggingface", "https://hf.example?token=secret"),

@@ -14,16 +14,7 @@ pub fn gem_set(mirror: &str) -> io::Result<()> {
 }
 
 pub fn gem_unset() -> io::Result<()> {
-    crate::run(
-        "gem",
-        &[
-            "sources",
-            "--add",
-            "https://rubygems.org/",
-            "--remove",
-            "https://gems.ruby-china.com/",
-        ],
-    )
+    crate::run("gem", &["sources", "--add", "https://rubygems.org/"])
 }
 
 pub fn bundle_set(mirror: &str) -> io::Result<()> {
