@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::io::{self, Write};
-use std::path::PathBuf;
+use std::io;
 use std::process;
 use std::thread;
 
@@ -8,29 +7,9 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 use lm::config::{redact_selection, Config, Scope};
 
-const STARTER_CONFIG: &str = r#"# lazy-mirror configuration
-
-[mirrors]
-# company = "https://packages.example.com/simple"
-
-[defaults]
-# pip = "company"
-# docker = "https://registry.example.com"
-
-[options]
-timeout_seconds = 10
-retries = 1
-cache_ttl_seconds = 300
-parallelism = 4
-"#;
-
 #[derive(Debug, Parser)]
 #[command(name = "lm", version, about = "Change package and software sources")]
 struct Cli {
-    #[arg(long, global = true, value_name = "FILE")]
-    config: Option<PathBuf>,
-    #[arg(long, global = true, conflicts_with = "config")]
-    no_config: bool,
     #[command(subcommand)]
     command: Commands,
 }
@@ -91,7 +70,10 @@ enum Commands {
         #[arg(long)]
         explain: bool,
     },
-    #[command(about = "Set a source, mirror name, or URL", visible_alias = "s")]
+    #[command(
+        about = "Set a source from the built-in mirror catalog",
+        visible_alias = "s"
+    )]
     Set {
         target: Target,
         mirror: Option<String>,
@@ -118,11 +100,6 @@ enum Commands {
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    #[command(about = "Validate or show the effective TOML configuration")]
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommand,
-    },
     #[command(about = "Validate the built-in target and mirror catalog")]
     Catalog {
         #[command(subcommand)]
@@ -140,7 +117,7 @@ enum Commands {
         #[arg(long, value_enum, default_value = "sh")]
         shell: EnvShell,
     },
-    #[command(about = "Check tools, configuration and selected mirror")]
+    #[command(about = "Check tools and the selected built-in mirror")]
     Doctor {
         target: Target,
         mirror: Option<String>,
@@ -173,24 +150,6 @@ enum Commands {
         format: OutputFormat,
         #[arg(long)]
         only_installed: bool,
-    },
-}
-
-#[derive(Debug, Subcommand)]
-enum ConfigCommand {
-    #[command(about = "Create a starter TOML configuration")]
-    Init,
-    #[command(about = "Validate the TOML configuration")]
-    Validate,
-    #[command(about = "Show effective configuration")]
-    Show {
-        #[arg(long, value_enum, default_value = "table")]
-        format: OutputFormat,
-    },
-    #[command(about = "Show configuration files and precedence")]
-    Sources {
-        #[arg(long, value_enum, default_value = "table")]
-        format: OutputFormat,
     },
 }
 
@@ -1120,7 +1079,7 @@ fn select_mirror(
     cache: Option<&mut lm::probe::HealthCache>,
 ) -> io::Result<String> {
     if !best {
-        return lm::catalog::resolve(catalog_name(target), selector, config);
+        return lm::catalog::resolve(catalog_name(target), selector);
     }
     let cache = cache.ok_or_else(|| io::Error::other("best mirror selection requires a cache"))?;
     let candidates = filter_group_candidates(
@@ -1700,12 +1659,8 @@ fn execute_all(
     let mut plan = Vec::new();
     for &target in ALL_TARGETS {
         if matches!(action, Action::Set | Action::Reset)
-            && ((target == Target::Flutter && config.enabled("dart"))
-                || (matches!(target, Target::Cabal | Target::Stack) && config.enabled("haskell")))
+            && (target == Target::Flutter || matches!(target, Target::Cabal | Target::Stack))
         {
-            continue;
-        }
-        if !config.enabled(catalog_name(target)) {
             continue;
         }
         if let Err(error) = validate_scope(target, options.scope) {
@@ -1745,13 +1700,9 @@ fn execute_all(
                     }
                     Err(_error)
                         if selector.is_none()
-                            && lm::catalog::builtin_mirrors(catalog_name(target))?.is_empty()
-                            && config.default_for(catalog_name(target)).is_none() =>
+                            && lm::catalog::builtin_mirrors(catalog_name(target))?.is_empty() =>
                     {
-                        eprintln!(
-                            "{}: skipped; configure a default or pass a URL",
-                            target_name(target)
-                        );
+                        eprintln!("{}: skipped; no built-in mirror", target_name(target));
                         continue;
                     }
                     Err(error) => return Err(error),
@@ -1841,14 +1792,13 @@ fn atomic_supported(target: Target) -> bool {
     target_capabilities(target).atomic
 }
 
-fn inspect(target: Target, config: &Config, scope: Scope) -> io::Result<lm::ToolStatus> {
+fn inspect(target: Target, _config: &Config, scope: Scope) -> io::Result<lm::ToolStatus> {
     let name = catalog_name(target);
-    let expected =
-        if lm::catalog::builtin_mirrors(name)?.is_empty() && config.default_for(name).is_none() {
-            String::new()
-        } else {
-            lm::catalog::resolve(name, None, config)?
-        };
+    let expected = if lm::catalog::builtin_mirrors(name)?.is_empty() {
+        String::new()
+    } else {
+        lm::catalog::resolve(name, None)?
+    };
     inspect_with_expected(target, &expected, scope)
 }
 
@@ -2017,7 +1967,7 @@ fn get(
     };
     let mut records = Vec::new();
     for target in targets.iter().copied() {
-        if !config.enabled(catalog_name(target)) || (only_installed && !is_installed(target)) {
+        if only_installed && !is_installed(target) {
             continue;
         }
         for current_scope in [Scope::Project, Scope::User, Scope::System] {
@@ -2040,7 +1990,6 @@ fn get(
                             lm::catalog::find(&record.target)
                                 .map_or(record.target.as_str(), |spec| spec.name),
                             None,
-                            config,
                             scope_from_name(&record.scope),
                             record,
                         );
@@ -2071,7 +2020,6 @@ fn get(
                     lm::catalog::find(&record.target)
                         .map_or(record.target.as_str(), |spec| spec.name),
                     None,
-                    config,
                     scope_from_name(&record.scope),
                     record,
                 ));
@@ -2111,17 +2059,14 @@ fn plan(
     };
     let mut records = Vec::new();
     for &target in targets {
-        if !config.enabled(catalog_name(target))
-            || validate_scope(target, scope).is_err()
-            || (only_installed && !is_installed(target))
-        {
+        if validate_scope(target, scope).is_err() || (only_installed && !is_installed(target)) {
             continue;
         }
         let current = status_record(target, config, scope);
         let desired = if reset {
             Ok(None)
         } else {
-            lm::catalog::resolve(catalog_name(target), selector, config).map(Some)
+            lm::catalog::resolve(catalog_name(target), selector).map(Some)
         };
         let (desired, error) = match desired {
             Ok(desired) => (desired, current.error.clone()),
@@ -2204,14 +2149,13 @@ fn doctor(
     let mut cache = lm::probe::HealthCache::load(ttl)?;
     let mut records = Vec::new();
     for &target in targets {
-        if !config.enabled(catalog_name(target))
-            || (options.only_installed && !is_installed(target))
+        if (options.only_installed && !is_installed(target))
             || validate_scope(target, scope).is_err()
         {
             continue;
         }
         let status = status_record(target, config, scope);
-        let desired = lm::catalog::resolve(catalog_name(target), selector, config);
+        let desired = lm::catalog::resolve(catalog_name(target), selector);
         let health = desired.as_ref().ok().and_then(|url| {
             measure_one(
                 target,
@@ -2254,7 +2198,7 @@ fn doctor(
         });
         if explain {
             record["explanation"] =
-                explanation_json(catalog_name(target), selector, config, scope, &status);
+                explanation_json(catalog_name(target), selector, scope, &status);
         }
         records.push(record);
     }
@@ -2311,45 +2255,19 @@ fn scope_from_name(scope: &str) -> Scope {
 fn explanation_json(
     target: &str,
     selector: Option<&str>,
-    config: &Config,
     scope: Scope,
     status: &StatusRecord,
 ) -> serde_json::Value {
-    let default = config.default_for(target).map(redact_selection);
-    let mirrors = config
-        .mirrors_for(target)
-        .map(|items| {
-            items
-                .iter()
-                .map(|item| redact_selection(item))
-                .collect::<Vec<_>>()
-        })
+    let mirrors = lm::catalog::builtin_mirrors(target)
+        .map(|items| items.iter().map(|item| item.name).collect::<Vec<_>>())
         .unwrap_or_default();
     serde_json::json!({
-        "config": config.path,
-        "config_sources": config
-            .sources()
-            .iter()
-            .map(|source| {
-                serde_json::json!({
-                    "path": source.path,
-                    "active": source.active,
-                    "loaded": source.loaded,
-                })
-            })
-            .collect::<Vec<_>>(),
         "target": target,
-        "enabled": config.enabled(target),
         "scope": scope_name(scope),
         "requested_selector": selector.map(redact_selection),
-        "configured_default": default,
-        "default_source": config.default_source(target),
-        "target_source": config.target_source(target),
         "mirror_pool": mirrors,
         "selection_order": [
             "CLI selector",
-            "[defaults]",
-            "[targets.<target>].default",
             "built-in first mirror",
         ],
         "adapter": {
@@ -2362,10 +2280,8 @@ fn explanation_json(
 }
 
 fn print_explanation(value: serde_json::Value) {
-    let config = value["config"].as_str().unwrap_or_default();
     let target = value["target"].as_str().unwrap_or_default();
     let scope = value["scope"].as_str().unwrap_or_default();
-    let default = value["configured_default"].as_str().unwrap_or("none");
     let pool = value["mirror_pool"]
         .as_array()
         .map(|items| {
@@ -2379,9 +2295,7 @@ fn print_explanation(value: serde_json::Value) {
     let adapter = value["adapter"]["path"]
         .as_str()
         .unwrap_or("external command");
-    println!(
-        "  explain: target={target} scope={scope} config={config} default={default} pool=[{pool}] adapter={adapter}"
-    );
+    println!("  explain: target={target} scope={scope} pool=[{pool}] adapter={adapter}");
 }
 
 fn validate_parallelism(parallelism: Option<usize>) -> io::Result<()> {
@@ -2395,20 +2309,16 @@ fn validate_parallelism(parallelism: Option<usize>) -> io::Result<()> {
     }
 }
 
-fn list(query: Option<&str>, config: &Config, format: OutputFormat) -> io::Result<()> {
+fn list(query: Option<&str>, format: OutputFormat) -> io::Result<()> {
     if format == OutputFormat::Json {
-        return list_json(query, config);
+        return list_json(query);
     }
-    println!("config: {}", config.path.display());
     if matches!(query, Some("mirror")) {
         let mut mirrors = BTreeSet::new();
         for target in lm::catalog::targets() {
             for mirror in target.mirrors {
                 mirrors.insert(mirror.name);
             }
-        }
-        for (name, _) in config.custom_mirrors() {
-            mirrors.insert(name);
         }
         for name in mirrors {
             println!("{name}");
@@ -2439,13 +2349,10 @@ fn list(query: Option<&str>, config: &Config, format: OutputFormat) -> io::Resul
     for mirror in spec.mirrors {
         println!("{}\t{}", mirror.name, redact_url(mirror.url));
     }
-    for (name, url) in config.custom_mirrors() {
-        println!("{}\t{} (config)", name, redact_url(url));
-    }
     Ok(())
 }
 
-fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
+fn list_json(query: Option<&str>) -> io::Result<()> {
     let output = if matches!(query, Some("mirror")) {
         let mut mirrors = BTreeMap::new();
         for target in lm::catalog::targets() {
@@ -2453,12 +2360,8 @@ fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
                 mirrors.insert(mirror.name.to_owned(), (mirror.url.to_owned(), "builtin"));
             }
         }
-        for (name, url) in config.custom_mirrors() {
-            mirrors.insert(name.to_owned(), (url.to_owned(), "config"));
-        }
         serde_json::json!({
             "schema": lm::JSON_SCHEMA,
-            "config": config.path,
             "mirrors": mirrors.into_iter().map(|(name, (url, origin))| serde_json::json!({"name": name, "url": redact_url(&url), "origin": origin})).collect::<Vec<_>>()
         })
     } else if let Some(query) =
@@ -2472,18 +2375,15 @@ fn list_json(query: Option<&str>, config: &Config) -> io::Result<()> {
         })?;
         serde_json::json!({
             "schema": lm::JSON_SCHEMA,
-            "config": config.path,
             "target": spec.name,
             "aliases": spec.aliases,
-            "mirrors": spec.mirrors.iter().map(|mirror| serde_json::json!({"name": mirror.name, "url": redact_url(mirror.url), "origin": "builtin"})).collect::<Vec<_>>(),
-            "custom_mirrors": config.custom_mirrors().map(|(name, url)| serde_json::json!({"name": name, "url": redact_url(url), "origin": "config"})).collect::<Vec<_>>()
+            "mirrors": spec.mirrors.iter().map(|mirror| serde_json::json!({"name": mirror.name, "url": redact_url(mirror.url), "origin": "builtin"})).collect::<Vec<_>>()
         })
     } else {
         let category = query.unwrap_or("target");
         serde_json::json!({
             "schema": lm::JSON_SCHEMA,
-            "config": config.path,
-            "targets": lm::catalog::targets().iter().filter(|target| category == "target" || target_category(target.name) == category).map(|target| serde_json::json!({"name": target.name, "category": target_category(target.name), "aliases": target.aliases, "mirrors": target.mirrors.len(), "enabled": config.enabled(target.name)})).collect::<Vec<_>>()
+            "targets": lm::catalog::targets().iter().filter(|target| category == "target" || target_category(target.name) == category).map(|target| serde_json::json!({"name": target.name, "category": target_category(target.name), "aliases": target.aliases, "mirrors": target.mirrors.len()})).collect::<Vec<_>>()
         })
     };
     print_json(&output)
@@ -2578,9 +2478,6 @@ fn measure(
     let mut cache = lm::probe::HealthCache::load(ttl)?;
     let mut records = Vec::new();
     for &target in targets {
-        if !config.enabled(catalog_name(target)) {
-            continue;
-        }
         if options.only_installed && !is_installed(target) {
             continue;
         }
@@ -2652,35 +2549,17 @@ fn measure_one(
     let candidates = if let Some(selector) = selector {
         vec![(
             selector.to_owned(),
-            lm::catalog::resolve(name, Some(selector), config)?,
+            lm::catalog::resolve(name, Some(selector))?,
         )]
     } else {
-        let mut candidates = if let Some(selections) = config.mirrors_for(name) {
-            selections
-                .iter()
-                .map(|selection| {
-                    Ok((
-                        selection.clone(),
-                        lm::catalog::resolve(name, Some(selection), config)?,
-                    ))
-                })
-                .collect::<io::Result<Vec<_>>>()?
-        } else {
-            specs
-                .iter()
-                .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
-                .collect::<Vec<_>>()
-        };
-        if config.mirrors_for(name).is_none() && config.default_for(name).is_some() {
-            let url = lm::catalog::resolve(name, None, config)?;
-            if !candidates.iter().any(|(_, candidate)| candidate == &url) {
-                candidates.push(("configured".to_owned(), url));
-            }
-        }
+        let candidates = specs
+            .iter()
+            .map(|mirror| (mirror.name.to_owned(), mirror.url.to_owned()))
+            .collect::<Vec<_>>();
         if candidates.is_empty() {
             return Ok(vec![MeasureRecord {
                 target: name.to_owned(),
-                mirror: "configured".to_owned(),
+                mirror: "builtin".to_owned(),
                 url: String::new(),
                 probe_url: None,
                 code: None,
@@ -2689,7 +2568,7 @@ fn measure_one(
                 milliseconds: None,
                 metrics: None,
                 cached: false,
-                error: Some(format!("{name} requires a mirror name or URL")),
+                error: Some(format!("{name} has no built-in mirror")),
             }]);
         }
         candidates
@@ -2857,95 +2736,6 @@ fn print_json(value: &serde_json::Value) -> io::Result<()> {
     Ok(())
 }
 
-fn config_command(config: &Config, command: ConfigCommand) -> io::Result<()> {
-    match command {
-        ConfigCommand::Init => {
-            if config.path.exists() {
-                return Err(io::Error::new(
-                    io::ErrorKind::AlreadyExists,
-                    format!("configuration already exists: {}", config.path.display()),
-                ));
-            }
-            if let Some(parent) = config
-                .path
-                .parent()
-                .filter(|parent| !parent.as_os_str().is_empty())
-            {
-                std::fs::create_dir_all(parent)?;
-            }
-            let mut file = std::fs::OpenOptions::new()
-                .write(true)
-                .create_new(true)
-                .open(&config.path)?;
-            file.write_all(STARTER_CONFIG.as_bytes())?;
-            println!("created\t{}", config.path.display());
-            Ok(())
-        }
-        ConfigCommand::Validate => {
-            println!("valid\t{}", config.path.display());
-            Ok(())
-        }
-        ConfigCommand::Show { format } => {
-            let value = config.effective_json();
-            if format == OutputFormat::Json {
-                print_json(&value)
-            } else {
-                println!("config: {}", config.path.display());
-                println!(
-                    "mirrors: {}",
-                    value["mirrors"].as_object().map_or(0, |items| items.len())
-                );
-                println!(
-                    "defaults: {}",
-                    value["defaults"].as_object().map_or(0, |items| items.len())
-                );
-                println!(
-                    "targets: {}",
-                    value["targets"].as_object().map_or(0, |items| items.len())
-                );
-                let options = &value["options"];
-                println!(
-                    "options: timeout={} retries={} cache-ttl={} parallelism={}",
-                    options["timeout_seconds"].as_u64().unwrap_or_default(),
-                    options["retries"].as_u64().unwrap_or_default(),
-                    options["cache_ttl_seconds"].as_u64().unwrap_or_default(),
-                    options["parallelism"].as_u64().unwrap_or_default()
-                );
-                Ok(())
-            }
-        }
-        ConfigCommand::Sources { format } => {
-            let value = serde_json::json!({
-                "schema": lm::JSON_SCHEMA,
-                "config": config.path,
-                "sources": config.sources().iter().map(|source| serde_json::json!({
-                    "path": source.path,
-                    "active": source.active,
-                    "loaded": source.loaded,
-                })).collect::<Vec<_>>(),
-            });
-            if format == OutputFormat::Json {
-                print_json(&value)
-            } else {
-                for source in config.sources() {
-                    println!(
-                        "{}\t{}",
-                        if !source.active {
-                            "disabled"
-                        } else if source.loaded {
-                            "loaded"
-                        } else {
-                            "not-found"
-                        },
-                        source.path.display()
-                    );
-                }
-                Ok(())
-            }
-        }
-    }
-}
-
 fn catalog_command(command: CatalogCommand) -> io::Result<()> {
     match command {
         CatalogCommand::Lint { format } => {
@@ -2971,13 +2761,8 @@ fn catalog_command(command: CatalogCommand) -> io::Result<()> {
     }
 }
 
-fn env_command(
-    target: Target,
-    selector: Option<&str>,
-    shell: EnvShell,
-    config: &Config,
-) -> io::Result<()> {
-    let mirror = lm::catalog::resolve(catalog_name(target), selector, config)?;
+fn env_command(target: Target, selector: Option<&str>, shell: EnvShell) -> io::Result<()> {
+    let mirror = lm::catalog::resolve(catalog_name(target), selector)?;
     let assignments = environment_values(target, &mirror).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::InvalidInput,
@@ -3059,7 +2844,6 @@ fn completions(shell: CompletionShell) -> io::Result<()> {
         "get",
         "set",
         "reset",
-        "config",
         "doctor",
         "plan",
         "diff",
@@ -3120,10 +2904,9 @@ _lm_completions "$@"
 
 fn run() -> io::Result<()> {
     let cli = Cli::parse();
-    let skip_config = matches!(&cli.command, Commands::Catalog { .. });
-    let config = Config::load_with_options(cli.config.as_deref(), cli.no_config || skip_config)?;
+    let config = Config::default();
     match cli.command {
-        Commands::List { query, format } => list(query.as_deref(), &config, format),
+        Commands::List { query, format } => list(query.as_deref(), format),
         Commands::Measure {
             target,
             mirror,
@@ -3256,14 +3039,13 @@ fn run() -> io::Result<()> {
                 )
             }
         }
-        Commands::Config { command } => config_command(&config, command),
         Commands::Catalog { command } => catalog_command(command),
         Commands::Completions { shell } => completions(shell),
         Commands::Env {
             target,
             mirror,
             shell,
-        } => env_command(target, mirror.as_deref(), shell, &config),
+        } => env_command(target, mirror.as_deref(), shell),
         Commands::Doctor {
             target,
             mirror,
@@ -3336,16 +3118,15 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "set", "pip", "tuna", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "reset", "pip", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "pip", "--all-scopes"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "config", "init"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "completions", "bash"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "huggingface", "--scope", "project"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "get", "pip", "--explain"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "doctor", "pip", "--explain"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "measure", "pip", "--ipv4"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "measure", "pip", "--ipv4", "--ipv6"]).is_err());
-        assert!(Cli::try_parse_from(["lm", "config", "sources"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "catalog", "lint", "--format", "json"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "--no-config", "list"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "config", "init"]).is_err());
+        assert!(Cli::try_parse_from(["lm", "--no-config", "list"]).is_err());
         assert!(Cli::try_parse_from(["lm", "env", "huggingface", "hf-mirror"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "list", "helm"]).is_ok());
     }

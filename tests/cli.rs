@@ -28,113 +28,15 @@ fn helm_is_a_custom_chart_repository_target() {
 #[test]
 fn mutation_json_is_machine_readable_in_dry_run_mode() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args([
-            "--no-config",
-            "set",
-            "helm",
-            "https://charts.example.com",
-            "--dry-run",
-            "--format",
-            "json",
-        ])
+        .args(["set", "docker", "daocloud", "--dry-run", "--format", "json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value[0]["schema"], "lm/v1");
-    assert_eq!(value[0]["target"], "helm");
+    assert_eq!(value[0]["target"], "docker");
     assert_eq!(value[0]["changed"], true);
     assert_eq!(value[0]["dry_run"], true);
-}
-
-#[test]
-fn invalid_config_has_a_configuration_exit_code() {
-    let path = std::env::temp_dir().join(format!(
-        "lm-cli-invalid-{}-{}.toml",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::write(&path, "[unknown]\nvalue = true\n").unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["--config", path.to_str().unwrap(), "list"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(2));
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn effective_config_is_machine_readable_and_redacts_credentials() {
-    let path = std::env::temp_dir().join(format!(
-        "lm-cli-config-{}-{}.toml",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::write(
-        &path,
-        "[mirrors]\nprivate = \"https://example.com/simple?token=secret\"\n[defaults]\npip = \"private\"\n",
-    )
-    .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args([
-            "--config",
-            path.to_str().unwrap(),
-            "config",
-            "show",
-            "--format",
-            "json",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["mirrors"]["private"], "https://example.com/simple");
-    assert_eq!(value["defaults"]["pip"], "private");
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret"));
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
-fn target_mirror_pool_is_visible_in_effective_config() {
-    let path = std::env::temp_dir().join(format!(
-        "lm-cli-pool-{}-{}.toml",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::write(
-        &path,
-        "[targets.pip]\ndefault = \"tuna\"\nmirrors = [\"tuna\", \"https://example.com/simple?token=secret\"]\n",
-    )
-    .unwrap();
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args([
-            "--config",
-            path.to_str().unwrap(),
-            "config",
-            "show",
-            "--format",
-            "json",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["targets"]["pip"]["mirrors"][0], "tuna");
-    assert_eq!(
-        value["targets"]["pip"]["mirrors"][1],
-        "https://example.com/simple"
-    );
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("secret"));
-    std::fs::remove_file(path).unwrap();
 }
 
 #[test]
@@ -151,33 +53,6 @@ fn env_prints_shell_assignments_without_writing_a_file() {
 }
 
 #[test]
-fn config_init_creates_a_template_without_overwriting() {
-    let path = std::env::temp_dir().join(format!(
-        "lm-cli-init-{}-{}.toml",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["--config", path.to_str().unwrap(), "config", "init"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    assert!(std::fs::read_to_string(&path)
-        .unwrap()
-        .contains("[options]"));
-
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["--config", path.to_str().unwrap(), "config", "init"])
-        .output()
-        .unwrap();
-    assert_eq!(output.status.code(), Some(1));
-    std::fs::remove_file(path).unwrap();
-}
-
-#[test]
 fn chsrc_target_aliases_and_plan_are_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
         .args(["list", "lua", "--format", "json"])
@@ -186,21 +61,6 @@ fn chsrc_target_aliases_and_plan_are_available() {
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["target"], "luarocks");
-
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args([
-            "plan",
-            "lua",
-            "https://mirror.example.com",
-            "--format",
-            "json",
-        ])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value[0]["schema"], "lm/v1");
-    assert_eq!(value[0]["desired"], "https://mirror.example.com");
 }
 
 #[test]
@@ -216,7 +76,6 @@ fn invalid_parallelism_has_a_configuration_exit_code() {
 fn invalid_selector_errors_do_not_leak_query_parameters() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
         .args([
-            "--no-config",
             "measure",
             "cargo",
             "sparse+https://mirror.example/index?token=secret",
@@ -225,14 +84,30 @@ fn invalid_selector_errors_do_not_leak_query_parameters() {
         .unwrap();
     assert!(!output.status.success());
     let output = String::from_utf8_lossy(&output.stderr);
-    assert!(output.contains("sparse+https://mirror.example/index"));
+    assert!(output.contains("unknown built-in mirror"));
     assert!(!output.contains("token=secret"));
+}
+
+#[test]
+fn config_file_and_direct_urls_are_not_supported() {
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["config", "init"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["set", "pip", "https://mirror.example/simple", "--dry-run"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unknown built-in mirror"));
 }
 
 #[test]
 fn catalog_lint_is_machine_readable() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["--no-config", "catalog", "lint", "--format", "json"])
+        .args(["catalog", "lint", "--format", "json"])
         .output()
         .unwrap();
     assert!(output.status.success());
@@ -240,17 +115,4 @@ fn catalog_lint_is_machine_readable() {
     assert_eq!(value["schema"], "lm/v1");
     assert_eq!(value["valid"], true);
     assert!(value["targets"].as_u64().unwrap() >= 70);
-}
-
-#[test]
-fn config_sources_reports_disabled_loading() {
-    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["--no-config", "config", "sources", "--format", "json"])
-        .output()
-        .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["schema"], "lm/v1");
-    assert_eq!(value["sources"][0]["active"], false);
-    assert_eq!(value["sources"][0]["loaded"], false);
 }

@@ -888,9 +888,12 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
             } else {
                 #[cfg(windows)]
                 {
-                    return crate::powershell_profile_path();
+                    crate::powershell_profile_path()
                 }
-                crate::home_file(profile_relative_path(&shell()))
+                #[cfg(not(windows))]
+                {
+                    crate::home_file(profile_relative_path(&shell()))
+                }
             }
         }
         Scope::System => {
@@ -906,12 +909,14 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
     }
 }
 
+#[cfg(not(windows))]
 fn shell() -> String {
     std::env::var_os("SHELL")
         .map(|value| value.to_string_lossy().into_owned())
         .unwrap_or_default()
 }
 
+#[cfg(not(windows))]
 fn profile_relative_path(shell: &str) -> &'static str {
     if shell.ends_with("/fish") {
         ".config/fish/config.fish"
@@ -972,7 +977,10 @@ pub(crate) fn apt_distribution() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{flatpak_args, nix_mirror, os_content, profile_relative_path, source_for_restore};
+    use super::{flatpak_args, nix_mirror, os_content, source_for_restore};
+
+    #[cfg(not(windows))]
+    use super::profile_relative_path;
 
     #[test]
     fn msys2_uses_pacman_repository_layout() {
@@ -1004,6 +1012,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(windows))]
     fn fish_uses_its_startup_configuration_file() {
         assert_eq!(
             profile_relative_path("/usr/bin/fish"),

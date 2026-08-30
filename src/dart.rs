@@ -121,17 +121,20 @@ fn profile_path(scope: Scope) -> io::Result<PathBuf> {
             }
             #[cfg(windows)]
             {
-                return crate::powershell_profile_path();
+                crate::powershell_profile_path()
             }
-            let shell = std::env::var_os("SHELL")
-                .map(|value| value.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            if shell.ends_with("/fish") {
-                crate::home_file(".config/fish/config.fish")
-            } else if shell.ends_with("/bash") {
-                crate::home_file(".bashrc")
-            } else {
-                crate::home_file(".zshrc")
+            #[cfg(not(windows))]
+            {
+                let shell = std::env::var_os("SHELL")
+                    .map(|value| value.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if shell.ends_with("/fish") {
+                    crate::home_file(".config/fish/config.fish")
+                } else if shell.ends_with("/bash") {
+                    crate::home_file(".bashrc")
+                } else {
+                    crate::home_file(".zshrc")
+                }
             }
         }
         Scope::System => {

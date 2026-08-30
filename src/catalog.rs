@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::io;
 
-use crate::config::Config;
+use crate::config::redact_selection;
 
 #[derive(Debug, Clone, Copy)]
 pub struct MirrorSpec {
@@ -939,15 +939,14 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
     ProbeSpec { suffix, response }
 }
 
-pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Result<String> {
+pub fn resolve(target: &str, selector: Option<&str>) -> io::Result<String> {
     let spec = find(target).ok_or_else(|| invalid_target(target))?;
-    let selection = selector.or_else(|| config.default_for(spec.name));
-    let Some(selection) = selection else {
+    let Some(selection) = selector else {
         return spec.mirrors.first().map_or_else(
             || {
                 Err(io::Error::new(
                     io::ErrorKind::InvalidInput,
-                    format!("{target} requires a mirror name or URL"),
+                    format!("{target} has no built-in mirror"),
                 ))
             },
             |mirror| Ok(mirror.url.to_owned()),
@@ -964,21 +963,6 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
             |mirror| Ok(mirror.url.to_owned()),
         );
     }
-    if crate::config::is_selection_url(spec.name, selection) {
-        return Ok(selection.to_owned());
-    }
-    if let Some(url) = config.mirror(selection) {
-        if crate::config::is_selection_url(spec.name, url) {
-            return Ok(url.to_owned());
-        }
-        return Err(io::Error::new(
-            io::ErrorKind::InvalidInput,
-            format!(
-                "mirror {} is not valid for {target}",
-                crate::config::redact_selection(selection)
-            ),
-        ));
-    }
     spec.mirrors
         .iter()
         .find(|mirror| mirror.name == selection)
@@ -987,8 +971,8 @@ pub fn resolve(target: &str, selector: Option<&str>, config: &Config) -> io::Res
             io::Error::new(
                 io::ErrorKind::InvalidInput,
                 format!(
-                    "unknown mirror {} for {target}; use lm list {target} or a URL",
-                    crate::config::redact_selection(selection)
+                    "unknown built-in mirror {} for {target}; use lm list {target}",
+                    redact_selection(selection)
                 ),
             )
         })
@@ -1050,43 +1034,22 @@ fn invalid_target(target: &str) -> io::Error {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-
     #[test]
-    fn config_url_overrides_builtin_selection() {
-        let path = std::env::temp_dir().join(format!("lm-catalog-{}.toml", std::process::id()));
-        fs::write(
-            &path,
-            "[mirrors]\ncorp = { url = \"https://mirror.example/simple\" }\n[defaults]\npip = \"corp\"\n",
-        )
-        .unwrap();
-        let config = Config::load(Some(&path)).unwrap();
+    fn only_builtin_mirrors_can_be_resolved() {
         assert_eq!(
-            resolve("pip", None, &config).unwrap(),
-            "https://mirror.example/simple"
+            resolve("pip", None).unwrap(),
+            "https://pypi.tuna.tsinghua.edu.cn/simple"
         );
         assert_eq!(
-            resolve("pip", Some("https://override.example/simple"), &config).unwrap(),
-            "https://override.example/simple"
-        );
-        assert_eq!(
-            resolve("huggingface", Some("hf-mirror"), &config).unwrap(),
+            resolve("huggingface", Some("hf-mirror")).unwrap(),
             "https://hf-mirror.com"
         );
         assert_eq!(
-            resolve(
-                "cargo",
-                Some("sparse+https://mirror.example/index/"),
-                &config
-            )
-            .unwrap(),
-            "sparse+https://mirror.example/index/"
-        );
-        assert_eq!(
-            resolve("docker", Some("first"), &config).unwrap(),
+            resolve("docker", Some("first")).unwrap(),
             "https://docker.m.daocloud.io"
         );
-        fs::remove_file(path).unwrap();
+        assert!(resolve("pip", Some("https://mirror.example/simple")).is_err());
+        assert!(resolve("helm", None).is_err());
     }
 
     #[test]

@@ -262,7 +262,7 @@ pub(crate) fn home_file(relative_path: &str) -> io::Result<std::path::PathBuf> {
 pub(crate) fn shell_env_assignment(variable: &str, value: &str) -> String {
     #[cfg(windows)]
     {
-        return format!("$env:{variable} = '{}'", value.replace('\'', "''"));
+        format!("$env:{variable} = '{}'", value.replace('\'', "''"))
     }
     #[cfg(not(windows))]
     {
