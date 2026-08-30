@@ -31,12 +31,32 @@ pub struct ProbeSpec {
 
 const NODE: &[MirrorSpec] = &[
     MirrorSpec {
+        name: "npm",
+        url: "https://registry.npmjs.org/",
+    },
+    MirrorSpec {
+        name: "yarn",
+        url: "https://registry.yarnpkg.com/",
+    },
+    MirrorSpec {
         name: "npmmirror",
+        url: "https://registry.npmmirror.com/",
+    },
+    MirrorSpec {
+        name: "taobao",
         url: "https://registry.npmmirror.com/",
     },
     MirrorSpec {
         name: "tencent",
         url: "https://mirrors.cloud.tencent.com/npm/",
+    },
+    MirrorSpec {
+        name: "npmMirror",
+        url: "https://replicate.npmjs.com/registry/",
+    },
+    MirrorSpec {
+        name: "github",
+        url: "https://npm.pkg.github.com/",
     },
 ];
 const GO: &[MirrorSpec] = &[
