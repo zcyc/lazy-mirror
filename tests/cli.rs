@@ -14,15 +14,13 @@ fn list_json_is_machine_readable() {
 }
 
 #[test]
-fn helm_is_a_custom_chart_repository_target() {
+fn targets_without_built_in_mirrors_are_not_listed() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
         .args(["list", "helm", "--format", "json"])
         .output()
         .unwrap();
-    assert!(output.status.success());
-    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["target"], "helm");
-    assert_eq!(value["mirrors"].as_array().unwrap().len(), 0);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("unsupported target"));
 }
 
 #[test]
@@ -55,12 +53,12 @@ fn env_prints_shell_assignments_without_writing_a_file() {
 #[test]
 fn chsrc_target_aliases_and_plan_are_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["list", "lua", "--format", "json"])
+        .args(["list", "node", "--format", "json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(value["target"], "luarocks");
+    assert_eq!(value["target"], "npm");
 }
 
 #[test]
@@ -114,5 +112,5 @@ fn catalog_lint_is_machine_readable() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["schema"], "lm/v1");
     assert_eq!(value["valid"], true);
-    assert!(value["targets"].as_u64().unwrap() >= 70);
+    assert_eq!(value["targets"], 42);
 }

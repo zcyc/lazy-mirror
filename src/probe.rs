@@ -846,6 +846,7 @@ fn unix_seconds() -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::catalog::{probe_spec, ProbeResponse};
 
     #[test]
     fn target_probe_uses_package_protocol_paths() {
@@ -991,10 +992,17 @@ mod tests {
     }
 
     #[test]
-    fn known_targets_without_protocol_probes_fail_closed() {
-        let error = probe_target("julia", "https://mirror.example", 1, 0, IpVersion::Any)
-            .expect_err("Julia must not fall back to a root HTTP status probe");
-        assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+    fn catalog_targets_have_protocol_probes() {
+        for target in crate::catalog::targets() {
+            let spec = probe_spec(target.name);
+            assert!(!spec.suffix.is_empty(), "{} has no probe path", target.name);
+            assert_ne!(
+                spec.response,
+                ProbeResponse::Any,
+                "{} has no probe contract",
+                target.name
+            );
+        }
     }
 
     #[test]

@@ -366,7 +366,6 @@ const RUSTUP: &[MirrorSpec] = &[
         url: "https://mirrors.zju.edu.cn/rustup",
     },
 ];
-const JULIA: &[MirrorSpec] = &[];
 const CPAN: &[MirrorSpec] = &[
     MirrorSpec {
         name: "tuna",
@@ -445,8 +444,6 @@ const WINGET: &[MirrorSpec] = &[MirrorSpec {
     name: "ustc",
     url: "https://mirrors.ustc.edu.cn/winget-source",
 }];
-const EMPTY: &[MirrorSpec] = &[];
-
 const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "npm",
@@ -549,11 +546,6 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: DOCKER,
     },
     TargetSpec {
-        name: "helm",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
         name: "conda",
         aliases: &["mamba", "anaconda"],
         mirrors: CONDA,
@@ -604,16 +596,6 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: RUSTUP,
     },
     TargetSpec {
-        name: "hex",
-        aliases: &["mix"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "julia",
-        aliases: &[],
-        mirrors: JULIA,
-    },
-    TargetSpec {
         name: "cpan",
         aliases: &["perl"],
         mirrors: CPAN,
@@ -624,24 +606,9 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: WINGET,
     },
     TargetSpec {
-        name: "opam",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "rye",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
         name: "nvm",
         aliases: &[],
         mirrors: NVM,
-    },
-    TargetSpec {
-        name: "luarocks",
-        aliases: &["lua"],
-        mirrors: EMPTY,
     },
     TargetSpec {
         name: "clojure",
@@ -664,11 +631,6 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: HASKELL,
     },
     TargetSpec {
-        name: "ocaml",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
         name: "cocoapods",
         aliases: &["cocoa", "pod"],
         mirrors: COCOAPODS,
@@ -684,11 +646,6 @@ const TARGETS: &[TargetSpec] = &[
         mirrors: NIX,
     },
     TargetSpec {
-        name: "guix",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
         name: "emacs",
         aliases: &["elpa"],
         mirrors: EMACS,
@@ -697,141 +654,6 @@ const TARGETS: &[TargetSpec] = &[
         name: "tex",
         aliases: &["ctan", "latex", "texlive", "miktex"],
         mirrors: TEX,
-    },
-    TargetSpec {
-        name: "linuxmint",
-        aliases: &["mint", "zorinos"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "fedora",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "opensuse",
-        aliases: &["suse"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "kali",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "arch",
-        aliases: &["archlinux"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "archlinuxcn",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "manjaro",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "gentoo",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "rocky",
-        aliases: &["rockylinux"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "alma",
-        aliases: &["almalinux"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "voidlinux",
-        aliases: &["void"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "solus",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "ros",
-        aliases: &["ros2"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "trisquel",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "linuxlite",
-        aliases: &["lite"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "raspi",
-        aliases: &["raspberrypi"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "armbian",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "openwrt",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "openeuler",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "openanolis",
-        aliases: &["anolis"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "openkylin",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "deepin",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "msys2",
-        aliases: &["msys"],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "termux",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "freebsd",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "openbsd",
-        aliases: &[],
-        mirrors: EMPTY,
-    },
-    TargetSpec {
-        name: "netbsd",
-        aliases: &[],
-        mirrors: EMPTY,
     },
 ];
 
@@ -847,7 +669,7 @@ pub fn find(name: &str) -> Option<&'static TargetSpec> {
 
 pub fn probe_spec(target: &str) -> ProbeSpec {
     let (suffix, response) = match target {
-        "apt" | "ros" => (
+        "apt" => (
             "/dists/{distribution}/Release",
             ProbeResponse::TextContainsAll(APT_SIGNATURES),
         ),
@@ -868,7 +690,6 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
             ProbeResponse::TextContains("<metadata"),
         ),
         "cargo" => ("/config.json", ProbeResponse::JsonObjectWithKey("dl")),
-        "helm" => ("/index.yaml", ProbeResponse::TextContains("apiVersion:")),
         "conda" => (
             "/pkgs/main/linux-64/repodata.json",
             ProbeResponse::JsonContainsAll(CONDA_SIGNATURES),
@@ -906,7 +727,6 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
             "/modules/02packages.details.txt.gz",
             ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
         ),
-        "luarocks" => ("/manifest", ProbeResponse::TextContains("repository")),
         "haskell" | "hackage" | "cabal" | "stack" => (
             "/01-index.tar.gz",
             ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
@@ -987,6 +807,12 @@ pub fn builtin_mirrors(target: &str) -> io::Result<&'static [MirrorSpec]> {
 pub fn lint() -> io::Result<()> {
     let mut selectors = BTreeMap::new();
     for target in TARGETS {
+        if target.mirrors.is_empty() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!("target {} has no built-in mirrors", target.name),
+            ));
+        }
         if selectors.insert(target.name, target.name).is_some() {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidData,

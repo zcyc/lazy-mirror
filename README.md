@@ -68,7 +68,7 @@ lm reset pip
 
 ## 支持的目标和源
 
-当前内置目录包含 **77 个目标**、**161 个源条目**。源数量为 0 的目标已列出，但当前没有可供 `lm set` 选择的内置源。
+当前内置目录包含 **42 个目标**、**161 个源条目**。
 
 ### 目标
 
@@ -94,7 +94,6 @@ lm reset pip
 | `buildkit` | `docker-buildkit`, `buildx` | 1 |
 | `containerd` | `nerdctl` | 1 |
 | `podman` | — | 1 |
-| `helm` | — | 0 |
 | `conda` | `mamba`, `anaconda` | 4 |
 | `nuget` | `dotnet` | 1 |
 | `dart` | `pub` | 3 |
@@ -105,52 +104,18 @@ lm reset pip
 | `apk` | `alpine` | 5 |
 | `brew` | `homebrew` | 1 |
 | `rustup` | — | 5 |
-| `hex` | `mix` | 0 |
-| `julia` | — | 0 |
 | `cpan` | `perl` | 2 |
 | `winget` | — | 1 |
-| `opam` | — | 0 |
-| `rye` | — | 0 |
 | `nvm` | — | 5 |
-| `luarocks` | `lua` | 0 |
 | `clojure` | `clojars` | 1 |
 | `haskell` | `hackage` | 2 |
 | `cabal` | — | 2 |
 | `stack` | — | 2 |
-| `ocaml` | — | 0 |
 | `cocoapods` | `cocoa`, `pod` | 1 |
 | `flathub` | `flatpak` | 1 |
 | `nix` | — | 3 |
-| `guix` | — | 0 |
 | `emacs` | `elpa` | 3 |
 | `tex` | `ctan`, `latex`, `texlive`, `miktex` | 3 |
-| `linuxmint` | `mint`, `zorinos` | 0 |
-| `fedora` | — | 0 |
-| `opensuse` | `suse` | 0 |
-| `kali` | — | 0 |
-| `arch` | `archlinux` | 0 |
-| `archlinuxcn` | — | 0 |
-| `manjaro` | — | 0 |
-| `gentoo` | — | 0 |
-| `rocky` | `rockylinux` | 0 |
-| `alma` | `almalinux` | 0 |
-| `voidlinux` | `void` | 0 |
-| `solus` | — | 0 |
-| `ros` | `ros2` | 0 |
-| `trisquel` | — | 0 |
-| `linuxlite` | `lite` | 0 |
-| `raspi` | `raspberrypi` | 0 |
-| `armbian` | — | 0 |
-| `openwrt` | — | 0 |
-| `openeuler` | — | 0 |
-| `openanolis` | `anolis` | 0 |
-| `openkylin` | — | 0 |
-| `deepin` | — | 0 |
-| `msys2` | `msys` | 0 |
-| `termux` | — | 0 |
-| `freebsd` | — | 0 |
-| `openbsd` | — | 0 |
-| `netbsd` | — | 0 |
 
 ### 内置源明细
 
