@@ -36,6 +36,17 @@ lm reset pip
 
 `measure` 用于比较速度，`check` 用于按工具协议检查镜像是否可用。
 
+### 自动发布
+
+推送与 `Cargo.toml` 版本一致的标签即可触发 GitHub Actions 自动发布：
+
+```bash
+git tag v0.1.0
+git push origin v0.1.0
+```
+
+发布产物包含 Linux x86_64、macOS Intel、macOS Apple Silicon 和 Windows x86_64 压缩包，以及 `SHA256SUMS` 校验文件、SBOM 和构建来源证明。
+
 ## 命令速查
 
 | 命令 | 用途 |

@@ -225,7 +225,10 @@ pub(crate) fn apt_distribution() -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{file_status, profile_relative_path, source_for_restore};
+    use super::{file_status, source_for_restore};
+
+    #[cfg(not(windows))]
+    use super::profile_relative_path;
 
     #[test]
     fn file_status_reports_missing_tool() {
