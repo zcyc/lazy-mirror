@@ -421,9 +421,8 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
         Target::Pdm => TargetCapabilities::new(false, true, false, false, &["pdm"]),
         Target::Poetry => TargetCapabilities::new(true, true, false, false, &["poetry"]),
         Target::Composer => TargetCapabilities::new(false, true, false, false, &["composer"]),
-        Target::Gem | Target::Bundle => {
-            TargetCapabilities::new(false, true, false, false, &["gem"])
-        }
+        Target::Gem => TargetCapabilities::new(false, true, false, false, &["gem"]),
+        Target::Bundle => TargetCapabilities::new(false, true, false, false, &["bundle"]),
         Target::Maven => TargetCapabilities::new(false, true, false, true, &["mvn"]),
         Target::Gradle => TargetCapabilities::new(false, true, false, true, &["gradle"]),
         Target::Sbt => TargetCapabilities::new(false, true, false, true, &["sbt"]),
@@ -521,20 +520,29 @@ fn run_action(
     scope: Scope,
 ) -> io::Result<()> {
     match target {
-        Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun => {
-            let name = target_name(target);
-            match action {
-                Action::Set => lm::node::set(name, mirror.unwrap(), scope),
-                Action::Reset => lm::node::unset(name, scope),
-            }
-        }
+        Target::Npm => match action {
+            Action::Set => lm::npm::set(mirror.unwrap(), scope),
+            Action::Reset => lm::npm::unset(scope),
+        },
+        Target::Pnpm => match action {
+            Action::Set => lm::pnpm::set(mirror.unwrap(), scope),
+            Action::Reset => lm::pnpm::unset(scope),
+        },
+        Target::Yarn => match action {
+            Action::Set => lm::yarn::set(mirror.unwrap(), scope),
+            Action::Reset => lm::yarn::unset(scope),
+        },
+        Target::Bun => match action {
+            Action::Set => lm::bun::set(mirror.unwrap(), scope),
+            Action::Reset => lm::bun::unset(scope),
+        },
         Target::Go => match action {
             Action::Set => lm::go::set(mirror.unwrap()),
             Action::Reset => lm::go::unset(),
         },
         Target::Pip => match action {
-            Action::Set => lm::python::set(mirror.unwrap()),
-            Action::Reset => lm::python::unset(),
+            Action::Set => lm::pip::set(mirror.unwrap()),
+            Action::Reset => lm::pip::unset(),
         },
         Target::Uv => match action {
             Action::Set => lm::uv::set(mirror.unwrap(), scope),
@@ -549,134 +557,132 @@ fn run_action(
             Action::Reset => lm::poetry::unset(scope),
         },
         Target::Composer => match action {
-            Action::Set => lm::php::set(mirror.unwrap()),
-            Action::Reset => lm::php::unset(),
+            Action::Set => lm::composer::set(mirror.unwrap()),
+            Action::Reset => lm::composer::unset(),
         },
         Target::Gem => match action {
-            Action::Set => lm::ruby::gem_set(mirror.unwrap()),
-            Action::Reset => lm::ruby::gem_unset(),
+            Action::Set => lm::gem::set(mirror.unwrap()),
+            Action::Reset => lm::gem::unset(),
         },
         Target::Bundle => match action {
-            Action::Set => lm::ruby::bundle_set(mirror.unwrap()),
-            Action::Reset => lm::ruby::bundle_unset(),
+            Action::Set => lm::bundle::set(mirror.unwrap()),
+            Action::Reset => lm::bundle::unset(),
         },
         Target::Maven => match action {
-            Action::Set => lm::java::maven_set(mirror.unwrap()),
-            Action::Reset => lm::java::maven_unset(),
+            Action::Set => lm::maven::set(mirror.unwrap()),
+            Action::Reset => lm::maven::unset(),
         },
         Target::Gradle => match action {
-            Action::Set => lm::java::gradle_set(mirror.unwrap()),
-            Action::Reset => lm::java::gradle_unset(),
+            Action::Set => lm::gradle::set(mirror.unwrap()),
+            Action::Reset => lm::gradle::unset(),
         },
         Target::Sbt => match action {
             Action::Set => lm::sbt::set(mirror.unwrap()),
             Action::Reset => lm::sbt::unset(),
         },
         Target::Cargo => match action {
-            Action::Set => lm::rust::set(mirror.unwrap(), scope),
-            Action::Reset => lm::rust::unset(scope),
+            Action::Set => lm::cargo::set(mirror.unwrap(), scope),
+            Action::Reset => lm::cargo::unset(scope),
         },
         Target::Docker => match action {
             Action::Set => lm::docker::set(mirror.unwrap(), scope),
             Action::Reset => lm::docker::unset(scope),
         },
         Target::Buildkit => match action {
-            Action::Set => lm::docker::buildkit_set(mirror.unwrap(), scope),
-            Action::Reset => lm::docker::buildkit_unset(scope),
+            Action::Set => lm::buildkit::set(mirror.unwrap(), scope),
+            Action::Reset => lm::buildkit::unset(scope),
         },
         Target::Containerd => match action {
-            Action::Set => lm::container::containerd_set(mirror.unwrap(), scope),
-            Action::Reset => lm::container::containerd_unset(scope),
+            Action::Set => lm::containerd::set(mirror.unwrap(), scope),
+            Action::Reset => lm::containerd::unset(scope),
         },
         Target::Podman => match action {
-            Action::Set => lm::container::podman_set(mirror.unwrap(), scope),
-            Action::Reset => lm::container::podman_unset(scope),
+            Action::Set => lm::podman::set(mirror.unwrap(), scope),
+            Action::Reset => lm::podman::unset(scope),
         },
         Target::Conda => match action {
             Action::Set => lm::conda::set(mirror.unwrap()),
             Action::Reset => lm::conda::unset(),
         },
         Target::Dart => match action {
-            Action::Set => lm::dart::dart_set(mirror.unwrap(), scope),
-            Action::Reset => lm::dart::dart_unset(scope),
+            Action::Set => lm::dart::set(mirror.unwrap(), scope),
+            Action::Reset => lm::dart::unset(scope),
         },
         Target::Flutter => match action {
-            Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope),
-            Action::Reset => lm::dart::flutter_unset(scope),
+            Action::Set => lm::flutter::set(mirror.unwrap(), scope),
+            Action::Reset => lm::flutter::unset(scope),
         },
         Target::Nuget => match action {
             Action::Set => lm::nuget::set(mirror.unwrap(), scope),
             Action::Reset => lm::nuget::unset(scope),
         },
         Target::Cran => match action {
-            Action::Set => lm::r::set(mirror.unwrap()),
-            Action::Reset => lm::r::unset(),
+            Action::Set => lm::cran::set(mirror.unwrap()),
+            Action::Reset => lm::cran::unset(),
         },
         Target::Huggingface => match action {
             Action::Set => lm::huggingface::set(mirror.unwrap(), scope),
             Action::Reset => lm::huggingface::unset(scope),
         },
         Target::Apt => match action {
-            Action::Set => lm::platform::apt_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::apt_unset(scope),
+            Action::Set => lm::apt::set(mirror.unwrap(), scope),
+            Action::Reset => lm::apt::unset(scope),
         },
         Target::Apk => match action {
-            Action::Set => lm::platform::apk_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::apk_unset(scope),
+            Action::Set => lm::apk::set(mirror.unwrap(), scope),
+            Action::Reset => lm::apk::unset(scope),
         },
         Target::Brew => match action {
-            Action::Set => lm::platform::brew_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::brew_unset(scope),
+            Action::Set => lm::brew::set(mirror.unwrap(), scope),
+            Action::Reset => lm::brew::unset(scope),
         },
         Target::Rustup => match action {
-            Action::Set => lm::platform::rustup_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::rustup_unset(scope),
+            Action::Set => lm::rustup::set(mirror.unwrap(), scope),
+            Action::Reset => lm::rustup::unset(scope),
         },
         Target::Cpan => match action {
-            Action::Set => lm::platform::cpan_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::cpan_unset(scope),
+            Action::Set => lm::cpan::set(mirror.unwrap(), scope),
+            Action::Reset => lm::cpan::unset(scope),
         },
         Target::Winget => match action {
-            Action::Set => lm::platform::winget_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::winget_unset(scope),
+            Action::Set => lm::winget::set(mirror.unwrap(), scope),
+            Action::Reset => lm::winget::unset(scope),
         },
         Target::Nvm => match action {
-            Action::Set => {
-                lm::platform::env_set("nvm", "NVM_NODEJS_ORG_MIRROR", mirror.unwrap(), scope)
-            }
-            Action::Reset => lm::platform::env_unset("nvm", scope),
+            Action::Set => lm::nvm::set(mirror.unwrap(), scope),
+            Action::Reset => lm::nvm::unset(scope),
         },
         Target::Clojure => match action {
-            Action::Set => lm::platform::clojure_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::clojure_unset(scope),
+            Action::Set => lm::clojure::set(mirror.unwrap(), scope),
+            Action::Reset => lm::clojure::unset(scope),
         },
         Target::Cabal => match action {
-            Action::Set => lm::platform::cabal_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::cabal_unset(scope),
+            Action::Set => lm::cabal::set(mirror.unwrap(), scope),
+            Action::Reset => lm::cabal::unset(scope),
         },
         Target::Stack => match action {
-            Action::Set => lm::platform::stack_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::stack_unset(scope),
+            Action::Set => lm::stack::set(mirror.unwrap(), scope),
+            Action::Reset => lm::stack::unset(scope),
         },
         Target::Cocoapods => match action {
-            Action::Set => lm::platform::cocoapods_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::cocoapods_unset(scope),
+            Action::Set => lm::cocoapods::set(mirror.unwrap(), scope),
+            Action::Reset => lm::cocoapods::unset(scope),
         },
         Target::Flathub => match action {
-            Action::Set => lm::platform::flatpak_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::flatpak_unset(scope),
+            Action::Set => lm::flathub::set(mirror.unwrap(), scope),
+            Action::Reset => lm::flathub::unset(scope),
         },
         Target::Nix => match action {
-            Action::Set => lm::platform::nix_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::nix_unset(scope),
+            Action::Set => lm::nix::set(mirror.unwrap(), scope),
+            Action::Reset => lm::nix::unset(scope),
         },
         Target::Emacs => match action {
-            Action::Set => lm::platform::emacs_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::emacs_unset(scope),
+            Action::Set => lm::emacs::set(mirror.unwrap(), scope),
+            Action::Reset => lm::emacs::unset(scope),
         },
         Target::Tex => match action {
-            Action::Set => lm::platform::tex_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::tex_unset(scope),
+            Action::Set => lm::tex::set(mirror.unwrap(), scope),
+            Action::Reset => lm::tex::unset(scope),
         },
         Target::All => unreachable!(),
     }
@@ -933,7 +939,7 @@ fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<Rollba
         for (target, source) in snapshot.iter().rev() {
             let result = match source {
                 Some(source) => {
-                    let source = lm::platform::source_for_restore(target_name(*target), source);
+                    let source = lm::shared::source_for_restore(target_name(*target), source);
                     restore_target(*target, Some(&source), scope)
                 }
                 None => restore_target(*target, None, scope),
@@ -1324,48 +1330,47 @@ fn inspect_with_expected(
     scope: Scope,
 ) -> io::Result<lm::ToolStatus> {
     let status = match target {
-        Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun => {
-            lm::node::status(target_name(target), expected, scope)
-        }
+        Target::Npm => lm::npm::status(expected, scope),
+        Target::Pnpm => lm::pnpm::status(expected, scope),
+        Target::Yarn => lm::yarn::status(expected, scope),
+        Target::Bun => lm::bun::status(expected, scope),
         Target::Go => lm::go::status(expected),
-        Target::Pip => lm::python::status(expected),
+        Target::Pip => lm::pip::status(expected),
         Target::Uv => lm::uv::status(expected, scope),
         Target::Pdm => lm::pdm::status(expected),
         Target::Poetry => lm::poetry::status(expected, scope),
-        Target::Composer => lm::php::status(expected),
-        Target::Gem => lm::ruby::gem_status(expected),
-        Target::Bundle => lm::ruby::bundle_status(expected),
-        Target::Maven => lm::java::maven_status(expected),
-        Target::Gradle => lm::java::gradle_status(expected),
+        Target::Composer => lm::composer::status(expected),
+        Target::Gem => lm::gem::status(expected),
+        Target::Bundle => lm::bundle::status(expected),
+        Target::Maven => lm::maven::status(expected),
+        Target::Gradle => lm::gradle::status(expected),
         Target::Sbt => lm::sbt::status(expected),
-        Target::Cargo => lm::rust::status(expected, scope),
+        Target::Cargo => lm::cargo::status(expected, scope),
         Target::Docker => lm::docker::status(scope),
-        Target::Buildkit => lm::docker::buildkit_status(scope),
-        Target::Containerd => lm::container::containerd_status(scope),
-        Target::Podman => lm::container::podman_status(scope),
+        Target::Buildkit => lm::buildkit::status(scope),
+        Target::Containerd => lm::containerd::status(scope),
+        Target::Podman => lm::podman::status(scope),
         Target::Conda => lm::conda::status(expected),
-        Target::Dart => lm::dart::dart_status(expected, scope),
-        Target::Flutter => lm::dart::flutter_status(expected, scope),
+        Target::Dart => lm::dart::status(expected, scope),
+        Target::Flutter => lm::flutter::status(expected, scope),
         Target::Nuget => lm::nuget::status(scope),
-        Target::Cran => lm::r::status(expected),
+        Target::Cran => lm::cran::status(expected),
         Target::Huggingface => lm::huggingface::status(expected, scope),
-        Target::Apt => lm::platform::apt_status(scope),
-        Target::Apk => lm::platform::apk_status(scope),
-        Target::Brew => lm::platform::brew_status(scope),
-        Target::Rustup => lm::platform::rustup_status(scope),
-        Target::Cpan => lm::platform::cpan_status(scope),
-        Target::Winget => lm::platform::winget_status(scope),
-        Target::Nvm => {
-            lm::platform::env_status("node", "nvm", "NVM_NODEJS_ORG_MIRROR", expected, scope)
-        }
-        Target::Clojure => lm::platform::clojure_status(expected, scope),
-        Target::Cabal => lm::platform::cabal_status(expected, scope),
-        Target::Stack => lm::platform::stack_status(expected, scope),
-        Target::Cocoapods => lm::platform::cocoapods_status(expected, scope),
-        Target::Flathub => lm::platform::flatpak_status(expected, scope),
-        Target::Nix => lm::platform::nix_status(expected, scope),
-        Target::Emacs => lm::platform::emacs_status(expected, scope),
-        Target::Tex => lm::platform::tex_status(expected, scope),
+        Target::Apt => lm::apt::status(scope),
+        Target::Apk => lm::apk::status(scope),
+        Target::Brew => lm::brew::status(scope),
+        Target::Rustup => lm::rustup::status(scope),
+        Target::Cpan => lm::cpan::status(scope),
+        Target::Winget => lm::winget::status(scope),
+        Target::Nvm => lm::nvm::status(expected, scope),
+        Target::Clojure => lm::clojure::status(expected, scope),
+        Target::Cabal => lm::cabal::status(expected, scope),
+        Target::Stack => lm::stack::status(expected, scope),
+        Target::Cocoapods => lm::cocoapods::status(expected, scope),
+        Target::Flathub => lm::flathub::status(expected, scope),
+        Target::Nix => lm::nix::status(expected, scope),
+        Target::Emacs => lm::emacs::status(expected, scope),
+        Target::Tex => lm::tex::status(expected, scope),
         Target::All => unreachable!(),
     }?;
     Ok(apply_expected_status(target, expected, status))
@@ -1877,7 +1882,7 @@ fn target_category(target: &str) -> &'static str {
 
 fn is_installed(target: Target) -> bool {
     if target == Target::Buildkit {
-        return lm::docker::buildkit_available();
+        return lm::buildkit::available();
     }
     target_capabilities(target)
         .commands
@@ -2220,7 +2225,7 @@ fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str,
     let values = match target {
         Target::Dart => vec![("PUB_HOSTED_URL", mirror.to_owned())],
         Target::Flutter => {
-            let (pub_url, storage_url) = lm::dart::flutter_urls(mirror);
+            let (pub_url, storage_url) = lm::flutter::urls(mirror);
             vec![
                 ("PUB_HOSTED_URL", pub_url),
                 ("FLUTTER_STORAGE_BASE_URL", storage_url),
@@ -2645,6 +2650,8 @@ mod tests {
     #[test]
     fn targets_map_to_their_real_commands() {
         assert_eq!(target_capabilities(Target::Pip).commands, &["pip", "pip3"]);
+        assert_eq!(target_capabilities(Target::Gem).commands, &["gem"]);
+        assert_eq!(target_capabilities(Target::Bundle).commands, &["bundle"]);
         assert_eq!(
             target_capabilities(Target::Containerd).commands,
             &["containerd", "nerdctl"]

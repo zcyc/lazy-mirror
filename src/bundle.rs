@@ -1,23 +1,6 @@
 use std::io;
 
-pub fn gem_set(mirror: &str) -> io::Result<()> {
-    crate::run(
-        "gem",
-        &[
-            "sources",
-            "--add",
-            mirror,
-            "--remove",
-            "https://rubygems.org/",
-        ],
-    )
-}
-
-pub fn gem_unset() -> io::Result<()> {
-    crate::run("gem", &["sources", "--add", "https://rubygems.org/"])
-}
-
-pub fn bundle_set(mirror: &str) -> io::Result<()> {
+pub fn set(mirror: &str) -> io::Result<()> {
     crate::run(
         "bundle",
         &[
@@ -30,27 +13,14 @@ pub fn bundle_set(mirror: &str) -> io::Result<()> {
     )
 }
 
-pub fn bundle_unset() -> io::Result<()> {
+pub fn unset() -> io::Result<()> {
     crate::run(
         "bundle",
         &["config", "unset", "--global", "mirror.https://rubygems.org"],
     )
 }
 
-pub fn gem_status(expected: &str) -> io::Result<crate::ToolStatus> {
-    let version = crate::command_version("gem")?;
-    let sources = crate::command_output("gem", &["sources", "--list"])?;
-    let source = first_url(&sources);
-    Ok(crate::ToolStatus::new(
-        version,
-        sources.contains(expected),
-        source,
-        None,
-        sources.replace('\n', "; "),
-    ))
-}
-
-pub fn bundle_status(expected: &str) -> io::Result<crate::ToolStatus> {
+pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("bundle")?;
     let mirror = crate::command_output(
         "bundle",

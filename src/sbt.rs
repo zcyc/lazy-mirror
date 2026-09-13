@@ -17,7 +17,8 @@ pub fn unset() -> io::Result<()> {
 pub fn status(expected: &str) -> io::Result<crate::ToolStatus> {
     let version = crate::command_version("sbt")?;
     let path = config_path()?;
-    let source = std::fs::read_to_string(&path).ok().and_then(|content| {
+    let content = crate::read_optional(&path)?;
+    let source = content.as_deref().and_then(|content| {
         content
             .strip_prefix(PREFIX)
             .map(|value| value.trim().to_owned())

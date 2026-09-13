@@ -18,9 +18,10 @@ pub fn unset(scope: Scope) -> io::Result<()> {
 pub fn status(expected: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
     let version = command_version()?;
     let path = profile_path(scope)?;
-    let source = std::fs::read_to_string(&path)
-        .ok()
-        .and_then(|content| env_value(&content, "HF_ENDPOINT"));
+    let content = crate::read_optional(&path)?;
+    let source = content
+        .as_deref()
+        .and_then(|content| env_value(content, "HF_ENDPOINT"));
     let configured = source.as_deref().is_some_and(|value| value == expected);
     Ok(crate::ToolStatus::new(
         version,

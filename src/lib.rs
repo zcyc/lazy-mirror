@@ -5,29 +5,51 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+pub mod apk;
+pub mod apt;
+pub mod brew;
+pub mod buildkit;
+pub mod bun;
+pub mod bundle;
+pub mod cabal;
+pub mod cargo;
 pub mod catalog;
+pub mod clojure;
+pub mod cocoapods;
+pub mod composer;
 pub mod conda;
 pub mod config;
-pub mod container;
+pub mod containerd;
+pub mod cpan;
+pub mod cran;
 pub mod dart;
 pub mod docker;
+pub mod emacs;
+pub mod flathub;
+pub mod flutter;
+pub mod gem;
 pub mod go;
-pub mod helm;
+pub mod gradle;
 pub mod huggingface;
-pub mod java;
-pub mod node;
+pub mod maven;
+pub mod nix;
+pub mod npm;
 pub mod nuget;
+pub mod nvm;
 pub mod pdm;
-pub mod php;
-pub mod platform;
+pub mod pip;
+pub mod pnpm;
+pub mod podman;
 pub mod poetry;
 pub mod probe;
-pub mod python;
-pub mod r;
-pub mod ruby;
-pub mod rust;
+pub mod rustup;
 pub mod sbt;
+pub mod shared;
+pub mod stack;
+pub mod tex;
 pub mod uv;
+pub mod winget;
+pub mod yarn;
 
 pub const JSON_SCHEMA: &str = "lm/v1";
 
@@ -39,10 +61,7 @@ pub(crate) fn run(program: &str, args: &[&str]) -> io::Result<()> {
     if output.status.success() {
         Ok(())
     } else {
-        Err(io::Error::other(format!(
-            "{program} exited with {}",
-            output.status
-        )))
+        Err(process_failure(program, output.status, &output.stderr))
     }
 }
 
@@ -52,13 +71,7 @@ pub(crate) fn command_output(program: &str, args: &[&str]) -> io::Result<String>
         .output()
         .map_err(|error| command_error(program, error))?;
     if !output.status.success() {
-        let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-        let message = if detail.is_empty() {
-            format!("{program} exited with {}", output.status)
-        } else {
-            format!("{program} exited with {}: {detail}", output.status)
-        };
-        return Err(io::Error::other(message));
+        return Err(process_failure(program, output.status, &output.stderr));
     }
 
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
@@ -92,6 +105,16 @@ fn command_error(program: &str, error: io::Error) -> io::Error {
     } else {
         error
     }
+}
+
+fn process_failure(program: &str, status: impl std::fmt::Display, stderr: &[u8]) -> io::Error {
+    let detail = String::from_utf8_lossy(stderr).trim().to_owned();
+    let message = if detail.is_empty() {
+        format!("{program} exited with {status}")
+    } else {
+        format!("{program} exited with {status}: {detail}")
+    };
+    io::Error::other(message)
 }
 
 fn command_not_found(program: &str) -> io::Error {
@@ -733,7 +756,7 @@ fn restore_file(backup: &Path, path: &Path) -> io::Result<()> {
     atomic_write(path, &content)
 }
 
-fn read_optional(path: &Path) -> io::Result<Option<String>> {
+pub(crate) fn read_optional(path: &Path) -> io::Result<Option<String>> {
     match fs::read_to_string(path) {
         Ok(content) => Ok(Some(content)),
         Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(None),
@@ -763,6 +786,15 @@ mod tests {
         assert!(missing_commands(&["pip", "pip3"])
             .to_string()
             .contains("pip, pip3"));
+    }
+
+    #[test]
+    fn command_failures_keep_stderr_context() {
+        let error = process_failure("tool", "exit status: 1", b"invalid configuration");
+        assert_eq!(
+            error.to_string(),
+            "tool exited with exit status: 1: invalid configuration"
+        );
     }
 
     #[test]

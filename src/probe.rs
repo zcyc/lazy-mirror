@@ -714,9 +714,9 @@ fn target_url(target: &str, url: &str) -> String {
     let distribution = if target == "ros" {
         std::env::var("LM_ROS_DISTRIBUTION")
             .or_else(|_| std::env::var("ROS_DISTRO"))
-            .unwrap_or_else(|_| crate::platform::apt_distribution())
+            .unwrap_or_else(|_| crate::shared::apt_distribution())
     } else {
-        crate::platform::apt_distribution()
+        crate::shared::apt_distribution()
     };
     let query_start = url.find(['?', '#']).unwrap_or(url.len());
     let (base, query) = url.split_at(query_start);
