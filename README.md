@@ -36,6 +36,8 @@ lm reset pip
 
 `measure` 用于比较速度，`check` 用于按工具协议检查镜像是否可用。
 
+推送与 `Cargo.toml` 版本一致的标签即可触发 GitHub Actions 自动发布。
+
 ## 命令速查
 
 | 命令 | 用途 |
