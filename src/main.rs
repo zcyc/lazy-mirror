@@ -16,13 +16,13 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Commands {
-    #[command(about = "List targets and mirror sources", visible_aliases = ["ls", "l"])]
+    #[command(about = "List targets and mirror sources")]
     List {
         query: Option<String>,
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    #[command(about = "Measure mirror availability and latency", visible_aliases = ["m", "cesu"])]
+    #[command(about = "Measure mirror availability and latency")]
     Measure {
         target: Target,
         mirror: Option<String>,
@@ -39,7 +39,7 @@ enum Commands {
         #[command(flatten)]
         ip: IpOptions,
     },
-    #[command(about = "Check mirror protocol endpoints", visible_alias = "verify")]
+    #[command(about = "Check mirror protocol endpoints")]
     Check {
         target: Target,
         mirror: Option<String>,
@@ -56,7 +56,7 @@ enum Commands {
         #[command(flatten)]
         ip: IpOptions,
     },
-    #[command(about = "Show the current source", visible_alias = "g")]
+    #[command(about = "Show the current source")]
     Get {
         target: Target,
         #[arg(long, value_enum, default_value = "user")]
@@ -70,10 +70,7 @@ enum Commands {
         #[arg(long)]
         explain: bool,
     },
-    #[command(
-        about = "Set a source from the built-in mirror catalog",
-        visible_alias = "s"
-    )]
+    #[command(about = "Set a source from the built-in mirror catalog")]
     Set {
         target: Target,
         mirror: Option<String>,
@@ -81,7 +78,7 @@ enum Commands {
         best: bool,
         #[arg(long, value_enum, default_value = "user")]
         scope: Scope,
-        #[arg(long, visible_alias = "dry")]
+        #[arg(long)]
         dry_run: bool,
         #[arg(long)]
         verify: bool,
@@ -90,12 +87,12 @@ enum Commands {
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
     },
-    #[command(about = "Reset to the upstream source", visible_alias = "r")]
+    #[command(about = "Reset to the upstream source")]
     Reset {
         target: Target,
         #[arg(long, value_enum, default_value = "user")]
         scope: Scope,
-        #[arg(long, visible_alias = "dry")]
+        #[arg(long)]
         dry_run: bool,
         #[arg(long, value_enum, default_value = "table")]
         format: OutputFormat,
@@ -138,7 +135,7 @@ enum Commands {
         #[command(flatten)]
         ip: IpOptions,
     },
-    #[command(about = "Show the exact source change plan", visible_alias = "diff")]
+    #[command(about = "Show the exact source change plan")]
     Plan {
         target: Target,
         mirror: Option<String>,
@@ -214,126 +211,55 @@ enum Target {
     Pnpm,
     Yarn,
     Bun,
-    #[value(alias = "nodejs")]
-    Node,
     Go,
-    #[value(alias = "py", alias = "pypi")]
+    #[value(alias = "pip3")]
     Pip,
-    Pip3,
-    Python,
     Uv,
     Pdm,
     Poetry,
     Composer,
-    Php,
-    #[value(alias = "rb", alias = "rubygems")]
     Gem,
     #[value(alias = "bundler")]
     Bundle,
-    Ruby,
-    #[value(alias = "mvn", alias = "maven-daemon", alias = "mvnd")]
+    #[value(alias = "mvn")]
     Maven,
     Gradle,
     Sbt,
-    Java,
-    #[value(alias = "crate")]
     Cargo,
-    Rust,
-    #[value(alias = "dockerhub")]
     Docker,
-    #[value(alias = "docker-buildkit", alias = "buildx")]
+    #[value(alias = "buildx")]
     Buildkit,
+    #[value(alias = "nerdctl")]
     Containerd,
-    Nerdctl,
     Podman,
-    Helm,
-    #[value(alias = "anaconda")]
+    #[value(alias = "mamba")]
     Conda,
-    Mamba,
-    #[value(alias = "pub")]
     Dart,
     Flutter,
+    #[value(alias = "dotnet")]
     Nuget,
-    Dotnet,
+    #[value(alias = "r")]
     Cran,
-    R,
-    #[value(alias = "hf", alias = "huggingface-hub")]
+    #[value(alias = "hf", alias = "huggingface-cli")]
     Huggingface,
-    #[value(alias = "debian", alias = "ubuntu")]
     Apt,
-    #[value(alias = "alpine")]
     Apk,
     #[value(alias = "homebrew")]
     Brew,
     Rustup,
-    #[value(alias = "mix")]
-    Hex,
-    Julia,
-    #[value(alias = "perl")]
     Cpan,
     Winget,
-    Opam,
-    #[value(alias = "python-rye")]
-    Rye,
     Nvm,
-    #[value(alias = "lua")]
-    Luarocks,
-    #[value(alias = "clojars")]
     Clojure,
-    Haskell,
-    Hackage,
     Cabal,
     Stack,
-    #[value(alias = "ocaml")]
-    Ocaml,
-    #[value(alias = "cocoa", alias = "pod")]
+    #[value(alias = "pod")]
     Cocoapods,
     #[value(alias = "flatpak")]
     Flathub,
     Nix,
-    Guix,
-    #[value(alias = "elpa")]
     Emacs,
-    #[value(alias = "ctan", alias = "latex", alias = "texlive", alias = "miktex")]
     Tex,
-    #[value(alias = "mint", alias = "zorinos")]
-    Linuxmint,
-    Fedora,
-    #[value(alias = "suse")]
-    Opensuse,
-    Kali,
-    #[value(alias = "archlinux")]
-    Arch,
-    Archlinuxcn,
-    Manjaro,
-    Gentoo,
-    #[value(alias = "rockylinux")]
-    Rocky,
-    #[value(alias = "almalinux")]
-    Alma,
-    #[value(alias = "void")]
-    Voidlinux,
-    Solus,
-    #[value(alias = "ros2")]
-    Ros,
-    Trisquel,
-    #[value(alias = "lite")]
-    Linuxlite,
-    #[value(alias = "raspberrypi")]
-    Raspi,
-    Armbian,
-    Openwrt,
-    Openeuler,
-    #[value(alias = "anolis")]
-    Openanolis,
-    Openkylin,
-    Deepin,
-    #[value(alias = "msys")]
-    Msys2,
-    Termux,
-    Freebsd,
-    Openbsd,
-    Netbsd,
 }
 
 const ALL_TARGETS: &[Target] = &[
@@ -354,6 +280,7 @@ const ALL_TARGETS: &[Target] = &[
     Target::Bundle,
     Target::Cargo,
     Target::Docker,
+    Target::Buildkit,
     Target::Containerd,
     Target::Podman,
     Target::Conda,
@@ -370,7 +297,6 @@ const ALL_TARGETS: &[Target] = &[
     Target::Winget,
     Target::Nvm,
     Target::Clojure,
-    Target::Haskell,
     Target::Cabal,
     Target::Stack,
     Target::Cocoapods,
@@ -489,49 +415,32 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
         Target::Pnpm => TargetCapabilities::new(true, true, false, false, &["pnpm"]),
         Target::Yarn => TargetCapabilities::new(true, true, false, false, &["yarn"]),
         Target::Bun => TargetCapabilities::new(true, true, false, false, &["bun"]),
-        Target::Node => {
-            TargetCapabilities::new(true, true, false, false, &["npm", "pnpm", "yarn", "bun"])
-        }
         Target::Go => TargetCapabilities::new(false, true, false, false, &["go"]),
-        Target::Pip => TargetCapabilities::new(false, true, false, false, &["pip"]),
-        Target::Pip3 => TargetCapabilities::new(false, true, false, false, &["pip3"]),
-        Target::Python => {
-            TargetCapabilities::new(false, true, false, false, &["pip", "uv", "pdm", "poetry"])
-        }
+        Target::Pip => TargetCapabilities::new(false, true, false, false, &["pip", "pip3"]),
         Target::Uv => TargetCapabilities::new(true, true, false, true, &["uv"]),
         Target::Pdm => TargetCapabilities::new(false, true, false, false, &["pdm"]),
         Target::Poetry => TargetCapabilities::new(true, true, false, false, &["poetry"]),
-        Target::Composer | Target::Php => {
-            TargetCapabilities::new(false, true, false, false, &["composer"])
-        }
-        Target::Gem | Target::Bundle | Target::Ruby => {
+        Target::Composer => TargetCapabilities::new(false, true, false, false, &["composer"]),
+        Target::Gem | Target::Bundle => {
             TargetCapabilities::new(false, true, false, false, &["gem"])
         }
         Target::Maven => TargetCapabilities::new(false, true, false, true, &["mvn"]),
         Target::Gradle => TargetCapabilities::new(false, true, false, true, &["gradle"]),
         Target::Sbt => TargetCapabilities::new(false, true, false, true, &["sbt"]),
-        Target::Java => {
-            TargetCapabilities::new(false, true, false, true, &["mvn", "gradle", "sbt"])
-        }
         Target::Cargo => TargetCapabilities::new(true, true, true, true, &["cargo"]),
-        Target::Rust => TargetCapabilities::new(true, true, true, true, &["cargo", "rustup"]),
         Target::Docker => TargetCapabilities::new(false, true, true, true, &["docker"]),
         Target::Buildkit => {
             TargetCapabilities::new(false, true, true, true, &["docker", "buildctl"])
         }
-        Target::Containerd | Target::Nerdctl => {
+        Target::Containerd => {
             TargetCapabilities::new(false, true, true, true, &["containerd", "nerdctl"])
         }
         Target::Podman => TargetCapabilities::new(false, true, true, true, &["podman"]),
-        Target::Helm => TargetCapabilities::new(false, true, false, false, &["helm"]),
-        Target::Conda => TargetCapabilities::new(false, true, false, false, &["conda"]),
-        Target::Mamba => TargetCapabilities::new(false, true, false, false, &["mamba"]),
-        Target::Dart => TargetCapabilities::new(true, true, true, true, &["dart", "flutter"]),
+        Target::Conda => TargetCapabilities::new(false, true, false, false, &["conda", "mamba"]),
+        Target::Dart => TargetCapabilities::new(true, true, true, true, &["dart"]),
         Target::Flutter => TargetCapabilities::new(true, true, true, true, &["flutter"]),
-        Target::Nuget | Target::Dotnet => {
-            TargetCapabilities::new(true, true, false, false, &["dotnet"])
-        }
-        Target::Cran | Target::R => TargetCapabilities::new(false, true, false, true, &["R"]),
+        Target::Nuget => TargetCapabilities::new(true, true, false, false, &["dotnet"]),
+        Target::Cran => TargetCapabilities::new(false, true, false, true, &["R"]),
         Target::Huggingface => {
             TargetCapabilities::new(true, true, true, true, &["hf", "huggingface-cli"])
         }
@@ -539,57 +448,17 @@ fn target_capabilities(target: Target) -> TargetCapabilities {
         Target::Apk => TargetCapabilities::new(false, false, true, true, &["apk"]),
         Target::Brew => TargetCapabilities::new(true, true, true, true, &["brew"]),
         Target::Rustup => TargetCapabilities::new(true, true, true, true, &["rustup"]),
-        Target::Hex => TargetCapabilities::new(false, true, false, false, &["mix"]),
-        Target::Julia => TargetCapabilities::new(true, true, true, true, &["julia"]),
         Target::Cpan => TargetCapabilities::new(true, true, true, true, &["cpan"]),
         Target::Winget => TargetCapabilities::new(false, true, false, false, &["winget"]),
-        Target::Opam => TargetCapabilities::new(false, true, false, false, &["opam"]),
-        Target::Rye => TargetCapabilities::new(true, true, false, true, &["rye"]),
         Target::Nvm => TargetCapabilities::new(true, true, false, true, &["node"]),
-        Target::Luarocks => TargetCapabilities::new(true, true, true, true, &["luarocks"]),
         Target::Clojure => TargetCapabilities::new(true, true, true, true, &["clojure"]),
-        Target::Haskell => TargetCapabilities::new(true, true, true, true, &["cabal", "stack"]),
-        Target::Hackage | Target::Cabal => {
-            TargetCapabilities::new(true, true, true, true, &["cabal"])
-        }
+        Target::Cabal => TargetCapabilities::new(true, true, true, true, &["cabal"]),
         Target::Stack => TargetCapabilities::new(true, true, true, true, &["stack"]),
-        Target::Ocaml => TargetCapabilities::new(false, true, false, false, &["opam"]),
         Target::Cocoapods => TargetCapabilities::new(false, true, false, false, &["pod"]),
         Target::Flathub => TargetCapabilities::new(false, true, false, false, &["flatpak"]),
         Target::Nix => TargetCapabilities::new(false, true, true, true, &["nix"]),
-        Target::Guix => TargetCapabilities::new(false, true, true, true, &["guix"]),
         Target::Emacs => TargetCapabilities::new(false, true, false, true, &["emacs"]),
         Target::Tex => TargetCapabilities::new(false, true, false, false, &["tlmgr"]),
-        Target::Linuxmint
-        | Target::Kali
-        | Target::Trisquel
-        | Target::Linuxlite
-        | Target::Raspi
-        | Target::Armbian
-        | Target::Deepin => TargetCapabilities::new(false, false, true, true, &["apt"]),
-        Target::Fedora | Target::Rocky | Target::Alma | Target::Openeuler | Target::Openanolis => {
-            TargetCapabilities::new(false, false, true, true, &["dnf", "yum"])
-        }
-        Target::Opensuse => TargetCapabilities::new(false, false, true, true, &["zypper"]),
-        Target::Arch | Target::Archlinuxcn | Target::Manjaro | Target::Msys2 => {
-            TargetCapabilities::new(
-                false,
-                target == Target::Msys2,
-                target != Target::Msys2,
-                false,
-                &["pacman"],
-            )
-        }
-        Target::Gentoo => TargetCapabilities::new(false, false, true, true, &["emerge"]),
-        Target::Voidlinux => TargetCapabilities::new(false, false, true, true, &["xbps-install"]),
-        Target::Solus => TargetCapabilities::new(false, false, true, true, &["eopkg"]),
-        Target::Ros => TargetCapabilities::new(false, false, true, true, &["apt"]),
-        Target::Openwrt => TargetCapabilities::new(false, false, true, true, &["opkg"]),
-        Target::Openkylin => TargetCapabilities::new(false, false, true, true, &["apt"]),
-        Target::Termux => TargetCapabilities::new(false, true, false, false, &["pkg"]),
-        Target::Freebsd => TargetCapabilities::new(false, false, true, false, &["pkg"]),
-        Target::Openbsd => TargetCapabilities::new(false, false, true, false, &["pkg_add"]),
-        Target::Netbsd => TargetCapabilities::new(false, false, true, false, &["pkgin"]),
         Target::All => TargetCapabilities::new(false, false, false, false, &[]),
     }
 }
@@ -601,113 +470,48 @@ fn target_name(target: Target) -> &'static str {
         Target::Pnpm => "pnpm",
         Target::Yarn => "yarn",
         Target::Bun => "bun",
-        Target::Node => "node",
         Target::Go => "go",
         Target::Pip => "pip",
-        Target::Pip3 => "pip3",
-        Target::Python => "python",
         Target::Uv => "uv",
         Target::Pdm => "pdm",
         Target::Poetry => "poetry",
         Target::Composer => "composer",
-        Target::Php => "php",
         Target::Gem => "gem",
         Target::Bundle => "bundle",
-        Target::Ruby => "ruby",
         Target::Maven => "maven",
         Target::Gradle => "gradle",
         Target::Sbt => "sbt",
-        Target::Java => "java",
         Target::Cargo => "cargo",
-        Target::Rust => "rust",
         Target::Docker => "docker",
         Target::Buildkit => "buildkit",
         Target::Containerd => "containerd",
-        Target::Nerdctl => "nerdctl",
         Target::Podman => "podman",
-        Target::Helm => "helm",
         Target::Conda => "conda",
-        Target::Mamba => "mamba",
         Target::Dart => "dart",
         Target::Flutter => "flutter",
         Target::Nuget => "nuget",
-        Target::Dotnet => "dotnet",
         Target::Cran => "cran",
-        Target::R => "r",
         Target::Huggingface => "huggingface",
         Target::Apt => "apt",
         Target::Apk => "apk",
         Target::Brew => "brew",
         Target::Rustup => "rustup",
-        Target::Hex => "hex",
-        Target::Julia => "julia",
         Target::Cpan => "cpan",
         Target::Winget => "winget",
-        Target::Opam => "opam",
-        Target::Rye => "rye",
         Target::Nvm => "nvm",
-        Target::Luarocks => "luarocks",
         Target::Clojure => "clojure",
-        Target::Haskell => "haskell",
-        Target::Hackage => "hackage",
         Target::Cabal => "cabal",
         Target::Stack => "stack",
-        Target::Ocaml => "ocaml",
         Target::Cocoapods => "cocoapods",
         Target::Flathub => "flathub",
         Target::Nix => "nix",
-        Target::Guix => "guix",
         Target::Emacs => "emacs",
         Target::Tex => "tex",
-        Target::Linuxmint => "linuxmint",
-        Target::Fedora => "fedora",
-        Target::Opensuse => "opensuse",
-        Target::Kali => "kali",
-        Target::Arch => "arch",
-        Target::Archlinuxcn => "archlinuxcn",
-        Target::Manjaro => "manjaro",
-        Target::Gentoo => "gentoo",
-        Target::Rocky => "rocky",
-        Target::Alma => "alma",
-        Target::Voidlinux => "voidlinux",
-        Target::Solus => "solus",
-        Target::Ros => "ros",
-        Target::Trisquel => "trisquel",
-        Target::Linuxlite => "linuxlite",
-        Target::Raspi => "raspi",
-        Target::Armbian => "armbian",
-        Target::Openwrt => "openwrt",
-        Target::Openeuler => "openeuler",
-        Target::Openanolis => "openanolis",
-        Target::Openkylin => "openkylin",
-        Target::Deepin => "deepin",
-        Target::Msys2 => "msys2",
-        Target::Termux => "termux",
-        Target::Freebsd => "freebsd",
-        Target::Openbsd => "openbsd",
-        Target::Netbsd => "netbsd",
     }
 }
 
 fn catalog_name(target: Target) -> &'static str {
-    match target {
-        Target::Node => "npm",
-        Target::Pip3 | Target::Python => "pip",
-        Target::Php => "composer",
-        Target::Ruby => "gem",
-        Target::Java => "maven",
-        Target::Rust => "cargo",
-        Target::Nerdctl => "containerd",
-        Target::Mamba => "conda",
-        Target::Dotnet => "nuget",
-        Target::R => "cran",
-        Target::Huggingface => "huggingface",
-        Target::Clojure => "clojure",
-        Target::Haskell | Target::Hackage | Target::Cabal => "cabal",
-        Target::Ocaml => "opam",
-        Target::Luarocks => "luarocks",
-        target => target_name(target),
-    }
+    target_name(target)
 }
 
 fn run_action(
@@ -724,29 +528,14 @@ fn run_action(
                 Action::Reset => lm::node::unset(name, scope),
             }
         }
-        Target::Node => run_group(
-            action,
-            mirror,
-            scope,
-            &[Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun],
-        ),
         Target::Go => match action {
             Action::Set => lm::go::set(mirror.unwrap()),
             Action::Reset => lm::go::unset(),
         },
-        Target::Pip | Target::Pip3 => {
-            let name = if target == Target::Pip { "pip" } else { "pip3" };
-            match action {
-                Action::Set => lm::python::set(name, mirror.unwrap()),
-                Action::Reset => lm::python::unset(name),
-            }
-        }
-        Target::Python => run_group(
-            action,
-            mirror,
-            scope,
-            &[Target::Pip, Target::Uv, Target::Pdm, Target::Poetry],
-        ),
+        Target::Pip => match action {
+            Action::Set => lm::python::set(mirror.unwrap()),
+            Action::Reset => lm::python::unset(),
+        },
         Target::Uv => match action {
             Action::Set => lm::uv::set(mirror.unwrap(), scope),
             Action::Reset => lm::uv::unset(scope),
@@ -759,11 +548,11 @@ fn run_action(
             Action::Set => lm::poetry::set(mirror.unwrap(), scope),
             Action::Reset => lm::poetry::unset(scope),
         },
-        Target::Composer | Target::Php => match action {
+        Target::Composer => match action {
             Action::Set => lm::php::set(mirror.unwrap()),
             Action::Reset => lm::php::unset(),
         },
-        Target::Gem | Target::Ruby => match action {
+        Target::Gem => match action {
             Action::Set => lm::ruby::gem_set(mirror.unwrap()),
             Action::Reset => lm::ruby::gem_unset(),
         },
@@ -775,12 +564,6 @@ fn run_action(
             Action::Set => lm::java::maven_set(mirror.unwrap()),
             Action::Reset => lm::java::maven_unset(),
         },
-        Target::Java => run_group(
-            action,
-            mirror,
-            scope,
-            &[Target::Maven, Target::Gradle, Target::Sbt],
-        ),
         Target::Gradle => match action {
             Action::Set => lm::java::gradle_set(mirror.unwrap()),
             Action::Reset => lm::java::gradle_unset(),
@@ -793,7 +576,6 @@ fn run_action(
             Action::Set => lm::rust::set(mirror.unwrap(), scope),
             Action::Reset => lm::rust::unset(scope),
         },
-        Target::Rust => run_rust_group(action, mirror, scope),
         Target::Docker => match action {
             Action::Set => lm::docker::set(mirror.unwrap(), scope),
             Action::Reset => lm::docker::unset(scope),
@@ -802,7 +584,7 @@ fn run_action(
             Action::Set => lm::docker::buildkit_set(mirror.unwrap(), scope),
             Action::Reset => lm::docker::buildkit_unset(scope),
         },
-        Target::Containerd | Target::Nerdctl => match action {
+        Target::Containerd => match action {
             Action::Set => lm::container::containerd_set(mirror.unwrap(), scope),
             Action::Reset => lm::container::containerd_unset(scope),
         },
@@ -810,27 +592,23 @@ fn run_action(
             Action::Set => lm::container::podman_set(mirror.unwrap(), scope),
             Action::Reset => lm::container::podman_unset(scope),
         },
-        Target::Helm => match action {
-            Action::Set => lm::helm::set(mirror.unwrap(), scope),
-            Action::Reset => lm::helm::unset(scope),
+        Target::Conda => match action {
+            Action::Set => lm::conda::set(mirror.unwrap()),
+            Action::Reset => lm::conda::unset(),
         },
-        Target::Conda | Target::Mamba => {
-            let name = target_name(target);
-            match action {
-                Action::Set => lm::conda::set(name, mirror.unwrap()),
-                Action::Reset => lm::conda::unset(name),
-            }
-        }
-        Target::Dart => run_dart_group(action, mirror, scope),
+        Target::Dart => match action {
+            Action::Set => lm::dart::dart_set(mirror.unwrap(), scope),
+            Action::Reset => lm::dart::dart_unset(scope),
+        },
         Target::Flutter => match action {
             Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope),
             Action::Reset => lm::dart::flutter_unset(scope),
         },
-        Target::Nuget | Target::Dotnet => match action {
+        Target::Nuget => match action {
             Action::Set => lm::nuget::set(mirror.unwrap(), scope),
             Action::Reset => lm::nuget::unset(scope),
         },
-        Target::Cran | Target::R => match action {
+        Target::Cran => match action {
             Action::Set => lm::r::set(mirror.unwrap()),
             Action::Reset => lm::r::unset(),
         },
@@ -854,14 +632,6 @@ fn run_action(
             Action::Set => lm::platform::rustup_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::rustup_unset(scope),
         },
-        Target::Hex => match action {
-            Action::Set => lm::platform::hex_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::hex_unset(scope),
-        },
-        Target::Julia => match action {
-            Action::Set => lm::platform::julia_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::julia_unset(scope),
-        },
         Target::Cpan => match action {
             Action::Set => lm::platform::cpan_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::cpan_unset(scope),
@@ -870,40 +640,23 @@ fn run_action(
             Action::Set => lm::platform::winget_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::winget_unset(scope),
         },
-        Target::Opam => match action {
-            Action::Set => lm::platform::opam_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::opam_unset(scope),
-        },
-        Target::Rye => match action {
-            Action::Set => lm::platform::env_set("rye", "RYE_PYPI_MIRROR", mirror.unwrap(), scope),
-            Action::Reset => lm::platform::env_unset("rye", scope),
-        },
         Target::Nvm => match action {
             Action::Set => {
                 lm::platform::env_set("nvm", "NVM_NODEJS_ORG_MIRROR", mirror.unwrap(), scope)
             }
             Action::Reset => lm::platform::env_unset("nvm", scope),
         },
-        Target::Luarocks => match action {
-            Action::Set => lm::platform::luarocks_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::luarocks_unset(scope),
-        },
         Target::Clojure => match action {
             Action::Set => lm::platform::clojure_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::clojure_unset(scope),
         },
-        Target::Haskell => run_group(action, mirror, scope, &[Target::Cabal, Target::Stack]),
-        Target::Hackage | Target::Cabal => match action {
+        Target::Cabal => match action {
             Action::Set => lm::platform::cabal_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::cabal_unset(scope),
         },
         Target::Stack => match action {
             Action::Set => lm::platform::stack_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::stack_unset(scope),
-        },
-        Target::Ocaml => match action {
-            Action::Set => lm::platform::opam_set(mirror.unwrap(), scope),
-            Action::Reset => lm::platform::opam_unset(scope),
         },
         Target::Cocoapods => match action {
             Action::Set => lm::platform::cocoapods_set(mirror.unwrap(), scope),
@@ -917,12 +670,6 @@ fn run_action(
             Action::Set => lm::platform::nix_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::nix_unset(scope),
         },
-        Target::Guix => match action {
-            Action::Set => {
-                lm::platform::env_set("guix", "GUIX_SUBSTITUTE_URLS", mirror.unwrap(), scope)
-            }
-            Action::Reset => lm::platform::env_unset("guix", scope),
-        },
         Target::Emacs => match action {
             Action::Set => lm::platform::emacs_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::emacs_unset(scope),
@@ -931,109 +678,7 @@ fn run_action(
             Action::Set => lm::platform::tex_set(mirror.unwrap(), scope),
             Action::Reset => lm::platform::tex_unset(scope),
         },
-        target @ (Target::Linuxmint
-        | Target::Fedora
-        | Target::Opensuse
-        | Target::Kali
-        | Target::Arch
-        | Target::Archlinuxcn
-        | Target::Manjaro
-        | Target::Gentoo
-        | Target::Rocky
-        | Target::Alma
-        | Target::Voidlinux
-        | Target::Solus
-        | Target::Ros
-        | Target::Trisquel
-        | Target::Linuxlite
-        | Target::Raspi
-        | Target::Armbian
-        | Target::Openwrt
-        | Target::Openeuler
-        | Target::Openanolis
-        | Target::Openkylin
-        | Target::Deepin
-        | Target::Msys2
-        | Target::Termux
-        | Target::Freebsd
-        | Target::Openbsd
-        | Target::Netbsd) => match action {
-            Action::Set => lm::platform::os_set(target_name(target), mirror.unwrap(), scope),
-            Action::Reset => lm::platform::os_unset(target_name(target), scope),
-        },
         Target::All => unreachable!(),
-    }
-}
-
-fn run_group(
-    action: Action,
-    mirror: Option<&str>,
-    scope: Scope,
-    targets: &[Target],
-) -> io::Result<()> {
-    let mut applied = false;
-    for &target in targets {
-        if is_installed(target) && validate_scope(target, scope).is_ok() {
-            run_action(target, action, mirror, scope)?;
-            applied = true;
-        }
-    }
-    if applied {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "none of the grouped tools are installed",
-        ))
-    }
-}
-
-fn run_rust_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
-    let cargo_installed = is_installed(Target::Cargo);
-    let rustup_installed = is_installed(Target::Rustup);
-    if !cargo_installed && !rustup_installed {
-        return Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "neither cargo nor rustup is installed",
-        ));
-    }
-    let rustup_mirror = if rustup_installed && action == Action::Set {
-        Some(lm::rust::rustup_mirror(mirror.unwrap())?)
-    } else {
-        None
-    };
-    if cargo_installed {
-        run_action(Target::Cargo, action, mirror, scope)?;
-    }
-    if rustup_installed {
-        run_action(Target::Rustup, action, rustup_mirror.as_deref(), scope)?;
-    }
-    Ok(())
-}
-
-fn run_dart_group(action: Action, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
-    let mut applied = false;
-    if is_installed(Target::Dart) {
-        match action {
-            Action::Set => lm::dart::dart_set(mirror.unwrap(), scope)?,
-            Action::Reset => lm::dart::dart_unset(scope)?,
-        }
-        applied = true;
-    }
-    if is_installed(Target::Flutter) {
-        match action {
-            Action::Set => lm::dart::flutter_set(mirror.unwrap(), scope)?,
-            Action::Reset => lm::dart::flutter_unset(scope)?,
-        }
-        applied = true;
-    }
-    if applied {
-        Ok(())
-    } else {
-        Err(io::Error::new(
-            io::ErrorKind::NotFound,
-            "neither dart nor flutter is installed",
-        ))
     }
 }
 
@@ -1048,18 +693,14 @@ fn select_mirror(
         return lm::catalog::resolve(catalog_name(target), selector);
     }
     let cache = cache.ok_or_else(|| io::Error::other("best mirror selection requires a cache"))?;
-    let candidates = filter_group_candidates(
+    let candidates = measure_one(
         target,
-        target == Target::Rust && is_installed(Target::Rustup),
-        measure_one(
-            target,
-            None,
-            config,
-            cache,
-            Some(config.settings().parallelism),
-            lm::probe::IpVersion::Any,
-        )?,
-    );
+        None,
+        config,
+        cache,
+        Some(config.settings().parallelism),
+        lm::probe::IpVersion::Any,
+    )?;
     fastest_mirror(candidates).ok_or_else(|| {
         io::Error::new(
             io::ErrorKind::NotFound,
@@ -1072,20 +713,6 @@ fn fastest_mirror(mut candidates: Vec<MeasureRecord>) -> Option<String> {
     candidates.retain(probe_is_usable);
     candidates.sort_by_key(|record| record.milliseconds.unwrap_or(u128::MAX));
     candidates.into_iter().next().map(|record| record.url)
-}
-
-fn filter_group_candidates(
-    target: Target,
-    rustup_required: bool,
-    candidates: Vec<MeasureRecord>,
-) -> Vec<MeasureRecord> {
-    if target != Target::Rust || !rustup_required {
-        return candidates;
-    }
-    candidates
-        .into_iter()
-        .filter(|record| group_member_mirror(target, Target::Rustup, &record.url).is_ok())
-        .collect()
 }
 
 fn verify_mirror(target: Target, mirror: &str, config: &Config) -> io::Result<()> {
@@ -1126,23 +753,7 @@ impl RollbackMode {
 }
 
 fn verification_targets(target: Target) -> Vec<Target> {
-    match target {
-        Target::Node => vec![Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun],
-        Target::Python => vec![Target::Pip, Target::Uv, Target::Pdm, Target::Poetry],
-        Target::Java => vec![Target::Maven, Target::Gradle, Target::Sbt],
-        Target::Rust => vec![Target::Cargo, Target::Rustup],
-        Target::Dart => vec![Target::Dart, Target::Flutter],
-        Target::Haskell => vec![Target::Cabal, Target::Stack],
-        target => vec![target],
-    }
-}
-
-fn group_member_mirror(group: Target, member: Target, mirror: &str) -> io::Result<String> {
-    match (group, member) {
-        (Target::Dart, Target::Flutter) => Ok(lm::dart::flutter_mirror(mirror)),
-        (Target::Rust, Target::Rustup) => lm::rust::rustup_mirror(mirror),
-        _ => Ok(mirror.to_owned()),
-    }
+    vec![target]
 }
 
 fn installed_targets(target: Target, scope: Scope) -> Vec<Target> {
@@ -1201,9 +812,7 @@ fn change_records(
                 .iter()
                 .find(|(current, _)| *current == member)
                 .and_then(|(_, source)| source.clone());
-            let desired = mirror
-                .map(|mirror| group_member_mirror(target, member, mirror))
-                .transpose()?;
+            let desired = mirror.map(str::to_owned);
             let (after, path) = if options.dry_run {
                 (before.clone(), None)
             } else {
@@ -1342,19 +951,9 @@ fn restore_snapshots(snapshots: &[&Snapshot], scope: Scope) -> io::Result<Rollba
 }
 
 fn restore_target(target: Target, mirror: Option<&str>, scope: Scope) -> io::Result<()> {
-    match target {
-        Target::Dart => match mirror {
-            Some(mirror) => lm::dart::dart_set(mirror, scope),
-            None => lm::dart::dart_unset(scope),
-        },
-        Target::Flutter => match mirror {
-            Some(mirror) => lm::dart::flutter_set(mirror, scope),
-            None => lm::dart::flutter_unset(scope),
-        },
-        _ => match mirror {
-            Some(mirror) => run_action(target, Action::Set, Some(mirror), scope),
-            None => run_action(target, Action::Reset, None, scope),
-        },
+    match mirror {
+        Some(mirror) => run_action(target, Action::Set, Some(mirror), scope),
+        None => run_action(target, Action::Reset, None, scope),
     }
 }
 
@@ -1384,64 +983,21 @@ fn source_matches(target: Target, status: &lm::ToolStatus, expected: &str) -> bo
             source,
             &format!("{}/homebrew-bottles", expected.trim_end_matches('/')),
         ),
-        Target::Arch
-        | Target::Archlinuxcn
-        | Target::Manjaro
-        | Target::Msys2
-        | Target::Voidlinux => prefixed_source_matches(source, expected),
         Target::Docker
         | Target::Buildkit
         | Target::Containerd
-        | Target::Nerdctl
         | Target::Podman
-        | Target::Helm
         | Target::Apk
         | Target::Rustup
-        | Target::Hex
-        | Target::Julia
         | Target::Cpan
         | Target::Winget
-        | Target::Opam
-        | Target::Ocaml
-        | Target::Nuget
-        | Target::Dotnet => url_matches(source, expected),
-        Target::Linuxmint
-        | Target::Fedora
-        | Target::Opensuse
-        | Target::Kali
-        | Target::Gentoo
-        | Target::Rocky
-        | Target::Alma
-        | Target::Solus
-        | Target::Ros
-        | Target::Trisquel
-        | Target::Linuxlite
-        | Target::Raspi
-        | Target::Armbian
-        | Target::Openwrt
-        | Target::Openeuler
-        | Target::Openanolis
-        | Target::Openkylin
-        | Target::Deepin
-        | Target::Termux
-        | Target::Freebsd
-        | Target::Openbsd
-        | Target::Netbsd => url_matches(source, expected),
+        | Target::Nuget => url_matches(source, expected),
         _ => true,
     }
 }
 
 fn url_matches(source: &str, expected: &str) -> bool {
     source.trim().trim_end_matches('/') == expected.trim().trim_end_matches('/')
-}
-
-fn prefixed_source_matches(source: &str, expected: &str) -> bool {
-    let source = source.trim().trim_end_matches('/');
-    let expected = expected.trim().trim_end_matches('/');
-    source == expected
-        || source
-            .strip_prefix(expected)
-            .is_some_and(|suffix| suffix.starts_with('/'))
 }
 
 fn apt_source_matches(source: &str, expected: &str) -> bool {
@@ -1468,9 +1024,8 @@ fn verify_applied(target: Target, mirror: &str, scope: Scope) -> io::Result<()> 
     let mut checked = false;
     for member in installed_targets(target, scope) {
         checked = true;
-        let expected = group_member_mirror(target, member, mirror)?;
-        let status = inspect_with_expected(member, &expected, scope)?;
-        if !source_matches(member, &status, &expected) {
+        let status = inspect_with_expected(member, mirror, scope)?;
+        if !source_matches(member, &status, mirror) {
             return Err(io::Error::other(format!(
                 "post-write verification failed for {}: configured source is {}",
                 target_name(member),
@@ -1624,11 +1179,6 @@ fn execute_all(
         .transpose()?;
     let mut plan = Vec::new();
     for &target in ALL_TARGETS {
-        if matches!(action, Action::Set | Action::Reset)
-            && (target == Target::Flutter || matches!(target, Target::Cabal | Target::Stack))
-        {
-            continue;
-        }
         if let Err(error) = validate_scope(target, options.scope) {
             eprintln!("{}: skipped; {error}", target_name(target));
             continue;
@@ -1774,101 +1324,48 @@ fn inspect_with_expected(
     scope: Scope,
 ) -> io::Result<lm::ToolStatus> {
     let status = match target {
-        Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun | Target::Node => {
-            let name = if target == Target::Node {
-                "npm"
-            } else {
-                target_name(target)
-            };
-            lm::node::status(name, expected, scope)
+        Target::Npm | Target::Pnpm | Target::Yarn | Target::Bun => {
+            lm::node::status(target_name(target), expected, scope)
         }
         Target::Go => lm::go::status(expected),
-        Target::Pip | Target::Pip3 | Target::Python => {
-            let name = if target == Target::Pip3 {
-                "pip3"
-            } else {
-                "pip"
-            };
-            lm::python::status(name, expected)
-        }
+        Target::Pip => lm::python::status(expected),
         Target::Uv => lm::uv::status(expected, scope),
         Target::Pdm => lm::pdm::status(expected),
         Target::Poetry => lm::poetry::status(expected, scope),
-        Target::Composer | Target::Php => lm::php::status(expected),
-        Target::Gem | Target::Ruby => lm::ruby::gem_status(expected),
+        Target::Composer => lm::php::status(expected),
+        Target::Gem => lm::ruby::gem_status(expected),
         Target::Bundle => lm::ruby::bundle_status(expected),
-        Target::Maven | Target::Java => lm::java::maven_status(expected),
+        Target::Maven => lm::java::maven_status(expected),
         Target::Gradle => lm::java::gradle_status(expected),
         Target::Sbt => lm::sbt::status(expected),
-        Target::Cargo | Target::Rust => lm::rust::status(expected, scope),
+        Target::Cargo => lm::rust::status(expected, scope),
         Target::Docker => lm::docker::status(scope),
         Target::Buildkit => lm::docker::buildkit_status(scope),
-        Target::Containerd | Target::Nerdctl => {
-            lm::container::containerd_status(target_name(target), scope)
-        }
+        Target::Containerd => lm::container::containerd_status(scope),
         Target::Podman => lm::container::podman_status(scope),
-        Target::Helm => lm::helm::status(scope),
-        Target::Conda | Target::Mamba => lm::conda::status(target_name(target), expected),
+        Target::Conda => lm::conda::status(expected),
         Target::Dart => lm::dart::dart_status(expected, scope),
         Target::Flutter => lm::dart::flutter_status(expected, scope),
-        Target::Nuget | Target::Dotnet => lm::nuget::status(scope),
-        Target::Cran | Target::R => lm::r::status(expected),
+        Target::Nuget => lm::nuget::status(scope),
+        Target::Cran => lm::r::status(expected),
         Target::Huggingface => lm::huggingface::status(expected, scope),
         Target::Apt => lm::platform::apt_status(scope),
         Target::Apk => lm::platform::apk_status(scope),
         Target::Brew => lm::platform::brew_status(scope),
         Target::Rustup => lm::platform::rustup_status(scope),
-        Target::Hex => lm::platform::hex_status(scope),
-        Target::Julia => lm::platform::julia_status(scope),
         Target::Cpan => lm::platform::cpan_status(scope),
         Target::Winget => lm::platform::winget_status(scope),
-        Target::Opam => lm::platform::opam_status(scope),
-        Target::Rye => lm::platform::env_status("rye", "rye", "RYE_PYPI_MIRROR", expected, scope),
         Target::Nvm => {
             lm::platform::env_status("node", "nvm", "NVM_NODEJS_ORG_MIRROR", expected, scope)
         }
-        Target::Luarocks => lm::platform::luarocks_status(expected, scope),
         Target::Clojure => lm::platform::clojure_status(expected, scope),
-        Target::Haskell | Target::Hackage | Target::Cabal => {
-            lm::platform::cabal_status(expected, scope)
-        }
+        Target::Cabal => lm::platform::cabal_status(expected, scope),
         Target::Stack => lm::platform::stack_status(expected, scope),
-        Target::Ocaml => lm::platform::opam_status(scope),
         Target::Cocoapods => lm::platform::cocoapods_status(expected, scope),
         Target::Flathub => lm::platform::flatpak_status(expected, scope),
         Target::Nix => lm::platform::nix_status(expected, scope),
-        Target::Guix => {
-            lm::platform::env_status("guix", "guix", "GUIX_SUBSTITUTE_URLS", expected, scope)
-        }
         Target::Emacs => lm::platform::emacs_status(expected, scope),
         Target::Tex => lm::platform::tex_status(expected, scope),
-        target @ (Target::Linuxmint
-        | Target::Fedora
-        | Target::Opensuse
-        | Target::Kali
-        | Target::Arch
-        | Target::Archlinuxcn
-        | Target::Manjaro
-        | Target::Gentoo
-        | Target::Rocky
-        | Target::Alma
-        | Target::Voidlinux
-        | Target::Solus
-        | Target::Ros
-        | Target::Trisquel
-        | Target::Linuxlite
-        | Target::Raspi
-        | Target::Armbian
-        | Target::Openwrt
-        | Target::Openeuler
-        | Target::Openanolis
-        | Target::Openkylin
-        | Target::Deepin
-        | Target::Msys2
-        | Target::Termux
-        | Target::Freebsd
-        | Target::Openbsd
-        | Target::Netbsd) => lm::platform::os_status(target_name(target), scope),
         Target::All => unreachable!(),
     }?;
     Ok(apply_expected_status(target, expected, status))
@@ -2356,38 +1853,7 @@ fn list_json(query: Option<&str>) -> io::Result<()> {
 }
 
 fn target_category(target: &str) -> &'static str {
-    if matches!(
-        target,
-        "apt"
-            | "apk"
-            | "linuxmint"
-            | "fedora"
-            | "opensuse"
-            | "kali"
-            | "arch"
-            | "archlinuxcn"
-            | "manjaro"
-            | "gentoo"
-            | "rocky"
-            | "alma"
-            | "voidlinux"
-            | "solus"
-            | "ros"
-            | "trisquel"
-            | "linuxlite"
-            | "raspi"
-            | "armbian"
-            | "openwrt"
-            | "openeuler"
-            | "openanolis"
-            | "openkylin"
-            | "deepin"
-            | "msys2"
-            | "termux"
-            | "freebsd"
-            | "openbsd"
-            | "netbsd"
-    ) {
+    if matches!(target, "apt" | "apk") {
         "os"
     } else if matches!(
         target,
@@ -2396,13 +1862,10 @@ fn target_category(target: &str) -> &'static str {
             | "buildkit"
             | "containerd"
             | "podman"
-            | "helm"
             | "winget"
-            | "opam"
             | "cocoapods"
             | "flathub"
             | "nix"
-            | "guix"
             | "emacs"
             | "tex"
     ) {
@@ -2783,12 +2246,9 @@ fn environment_values(target: Target, mirror: &str) -> Option<Vec<(&'static str,
             ("RUSTUP_DIST_SERVER", mirror.to_owned()),
             ("RUSTUP_UPDATE_ROOT", format!("{base}/rustup")),
         ],
-        Target::Julia => vec![("JULIA_PKG_SERVER", mirror.to_owned())],
         Target::Cpan => vec![("PERL_CPAN_MIRROR", mirror.to_owned())],
-        Target::Rye => vec![("RYE_PYPI_MIRROR", mirror.to_owned())],
         Target::Nvm => vec![("NVM_NODEJS_ORG_MIRROR", mirror.to_owned())],
         Target::Nix => vec![("NIX_CONFIG", format!("substituters = {mirror}"))],
-        Target::Guix => vec![("GUIX_SUBSTITUTE_URLS", mirror.to_owned())],
         _ => return None,
     };
     Some(values)
@@ -2810,9 +2270,9 @@ fn completions(shell: CompletionShell) -> io::Result<()> {
         "get",
         "set",
         "reset",
+        "catalog",
         "doctor",
         "plan",
-        "diff",
         "completions",
         "env",
         "--help",
@@ -3078,8 +2538,8 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "check", "docker", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "list", "apt", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "rustup", "rsproxy"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "set", "buildkit", "daocloud", "--dry"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "docker", "daocloud", "--dry-run"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "buildkit", "daocloud", "--dry-run"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "pip", "--best", "--verify"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "set", "pip", "tuna", "--format", "json"]).is_ok());
         assert!(Cli::try_parse_from(["lm", "reset", "pip", "--format", "json"]).is_ok());
@@ -3094,7 +2554,8 @@ mod tests {
         assert!(Cli::try_parse_from(["lm", "config", "init"]).is_err());
         assert!(Cli::try_parse_from(["lm", "--no-config", "list"]).is_err());
         assert!(Cli::try_parse_from(["lm", "env", "huggingface", "hf-mirror"]).is_ok());
-        assert!(Cli::try_parse_from(["lm", "list", "helm"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "set", "pip3", "tuna"]).is_ok());
+        assert!(Cli::try_parse_from(["lm", "get", "helm"]).is_err());
     }
 
     #[test]
@@ -3128,14 +2589,15 @@ mod tests {
     #[test]
     fn expected_status_rejects_a_different_managed_source() {
         let status = lm::ToolStatus::new(
-            "helm version".to_owned(),
+            "containerd --version".to_owned(),
             true,
             Some("https://other.example.com".to_owned()),
             None,
             "",
         );
         assert!(
-            !apply_expected_status(Target::Helm, "https://charts.example.com", status).configured
+            !apply_expected_status(Target::Containerd, "https://mirror.example.com", status)
+                .configured
         );
     }
 
@@ -3181,68 +2643,51 @@ mod tests {
     }
 
     #[test]
-    fn rust_best_candidates_exclude_rustup_incompatible_sources() {
-        let record = |url: &str, milliseconds| MeasureRecord {
-            target: "cargo".to_owned(),
-            mirror: url.to_owned(),
-            url: url.to_owned(),
-            probe_url: None,
-            code: Some("200".to_owned()),
-            state: "healthy".to_owned(),
-            detail: None,
-            milliseconds: Some(milliseconds),
-            metrics: None,
-            cached: false,
-            error: None,
-        };
-        let candidates = filter_group_candidates(
-            Target::Rust,
-            true,
-            vec![
-                record("https://mirrors.ustc.edu.cn/crates.io-index/", 1),
-                record("https://rsproxy.cn/index/", 2),
-            ],
+    fn targets_map_to_their_real_commands() {
+        assert_eq!(target_capabilities(Target::Pip).commands, &["pip", "pip3"]);
+        assert_eq!(
+            target_capabilities(Target::Containerd).commands,
+            &["containerd", "nerdctl"]
         );
         assert_eq!(
-            candidates
-                .iter()
-                .map(|record| record.url.as_str())
-                .collect::<Vec<_>>(),
-            vec!["https://rsproxy.cn/index/"]
+            target_capabilities(Target::Conda).commands,
+            &["conda", "mamba"]
         );
+        assert_eq!(verification_targets(Target::Pip), vec![Target::Pip]);
+        assert_eq!(verification_targets(Target::Docker), vec![Target::Docker]);
     }
 
     #[test]
-    fn grouped_targets_detect_any_installed_member() {
-        assert_eq!(
-            target_capabilities(Target::Node).commands,
-            &["npm", "pnpm", "yarn", "bun"]
-        );
-        assert_eq!(
-            verification_targets(Target::Node),
-            vec![Target::Npm, Target::Pnpm, Target::Yarn, Target::Bun]
-        );
-        assert_eq!(
-            target_capabilities(Target::Java).commands,
-            &["mvn", "gradle", "sbt"]
-        );
-        assert_eq!(
-            target_capabilities(Target::Rust).commands,
-            &["cargo", "rustup"]
-        );
-        assert_eq!(
-            target_capabilities(Target::Dart).commands,
-            &["dart", "flutter"]
-        );
-        assert_eq!(
-            target_capabilities(Target::Haskell).commands,
-            &["cabal", "stack"]
-        );
-        assert_eq!(
-            verification_targets(Target::Python),
-            vec![Target::Pip, Target::Uv, Target::Pdm, Target::Poetry]
-        );
-        assert_eq!(verification_targets(Target::Docker), vec![Target::Docker]);
+    fn catalog_targets_and_aliases_are_cli_targets() {
+        let catalog_targets = lm::catalog::targets()
+            .iter()
+            .map(|target| target.name)
+            .collect::<BTreeSet<_>>();
+        let all_targets = ALL_TARGETS
+            .iter()
+            .map(|target| target_name(*target))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(catalog_targets, all_targets);
+
+        for target in lm::catalog::targets() {
+            assert!(
+                Cli::try_parse_from(["lm", "get", target.name]).is_ok(),
+                "catalog target is not accepted by the CLI: {}",
+                target.name
+            );
+            for alias in target.aliases {
+                assert!(
+                    Cli::try_parse_from(["lm", "get", alias]).is_ok(),
+                    "catalog alias is not accepted by the CLI: {alias}"
+                );
+            }
+        }
+        for removed in ["node", "python", "rust", "helm", "hackage"] {
+            assert!(
+                Cli::try_parse_from(["lm", "get", removed]).is_err(),
+                "removed target is still accepted by the CLI: {removed}"
+            );
+        }
     }
 
     #[test]
@@ -3258,26 +2703,27 @@ mod tests {
         assert!(!npm.supports(Scope::System));
         assert!(!npm.atomic);
 
-        assert!(!target_capabilities(Target::Freebsd).supports(Scope::User));
-        assert!(target_capabilities(Target::Freebsd).supports(Scope::System));
+        let apt = target_capabilities(Target::Apt);
+        assert!(!apt.supports(Scope::User));
+        assert!(apt.supports(Scope::System));
     }
 
     #[test]
     fn post_write_verification_compares_source_only_for_unaware_adapters() {
         let status = lm::ToolStatus::new(
-            "helm version".to_owned(),
+            "containerd --version".to_owned(),
             true,
-            Some("https://charts.example.com/".to_owned()),
+            Some("https://mirror.example.com".to_owned()),
             None,
             "",
         );
         assert!(source_matches(
-            Target::Helm,
+            Target::Containerd,
             &status,
-            "https://charts.example.com"
+            "https://mirror.example.com/"
         ));
         assert!(!source_matches(
-            Target::Helm,
+            Target::Containerd,
             &status,
             "https://other.example.com"
         ));
@@ -3313,24 +2759,6 @@ mod tests {
         assert!(!source_matches(
             Target::Brew,
             &brew,
-            "https://other.example"
-        ));
-
-        let arch = lm::ToolStatus::new(
-            "pacman".to_owned(),
-            true,
-            Some("https://mirror.example/$repo/os/$arch".to_owned()),
-            None,
-            "",
-        );
-        assert!(source_matches(
-            Target::Arch,
-            &arch,
-            "https://mirror.example"
-        ));
-        assert!(!source_matches(
-            Target::Arch,
-            &arch,
             "https://other.example"
         ));
     }
@@ -3371,23 +2799,6 @@ mod tests {
                 "NIX_CONFIG",
                 "substituters = https://cache.example".to_owned()
             )])
-        );
-    }
-
-    #[test]
-    fn grouped_mirrors_are_mapped_for_each_adapter() {
-        assert_eq!(
-            group_member_mirror(
-                Target::Dart,
-                Target::Flutter,
-                "https://mirror.sjtu.edu.cn/dart-pub"
-            )
-            .unwrap(),
-            "https://mirror.sjtu.edu.cn"
-        );
-        assert_eq!(
-            group_member_mirror(Target::Rust, Target::Rustup, "https://rsproxy.cn/index/").unwrap(),
-            "https://rsproxy.cn"
         );
     }
 

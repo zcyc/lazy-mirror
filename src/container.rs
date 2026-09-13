@@ -23,7 +23,11 @@ pub fn containerd_unset(scope: Scope) -> io::Result<()> {
     })
 }
 
-pub fn containerd_status(command: &str, scope: Scope) -> io::Result<crate::ToolStatus> {
+pub fn containerd_status(scope: Scope) -> io::Result<crate::ToolStatus> {
+    let command = ["containerd", "nerdctl"]
+        .into_iter()
+        .find(|command| crate::command_exists(command))
+        .ok_or_else(|| crate::missing_commands(&["containerd", "nerdctl"]))?;
     let version = crate::command_version(command)?;
     let path = containerd_path(scope)?;
     let content = std::fs::read_to_string(&path).ok();

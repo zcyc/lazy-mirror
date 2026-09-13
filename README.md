@@ -68,54 +68,53 @@ lm reset pip
 
 ## 支持的目标和源
 
-当前内置目录包含 **42 个目标**、**161 个源条目**。
+当前内置目录包含 **41 个目标**、**159 个源条目**。
 
 ### 目标
 
 | 目标 | 别名 | 内置源数量 |
 | --- | --- | ---: |
-| `npm` | `node`, `nodejs` | 6 |
+| `npm` | — | 6 |
 | `pnpm` | — | 6 |
 | `yarn` | — | 6 |
 | `bun` | — | 6 |
 | `go` | — | 5 |
-| `pip` | `pip3`, `python`, `py`, `pypi` | 10 |
+| `pip` | `pip3` | 10 |
 | `uv` | — | 10 |
 | `pdm` | — | 10 |
 | `poetry` | — | 10 |
-| `composer` | `php` | 2 |
-| `gem` | `ruby` | 6 |
+| `composer` | — | 2 |
+| `gem` | — | 6 |
 | `bundle` | `bundler` | 6 |
-| `maven` | `java`, `mvn`, `maven-daemon`, `mvnd` | 5 |
+| `maven` | `mvn` | 5 |
 | `gradle` | — | 5 |
 | `sbt` | — | 5 |
-| `cargo` | `rust`, `crate` | 4 |
-| `docker` | `dockerhub` | 1 |
-| `buildkit` | `docker-buildkit`, `buildx` | 1 |
+| `cargo` | — | 4 |
+| `docker` | — | 1 |
+| `buildkit` | `buildx` | 1 |
 | `containerd` | `nerdctl` | 1 |
 | `podman` | — | 1 |
-| `conda` | `mamba`, `anaconda` | 4 |
+| `conda` | `mamba` | 4 |
 | `nuget` | `dotnet` | 1 |
-| `dart` | `pub` | 3 |
+| `dart` | — | 3 |
 | `flutter` | — | 2 |
 | `cran` | `r` | 2 |
-| `huggingface` | `hf`, `huggingface-hub` | 1 |
-| `apt` | `debian`, `ubuntu` | 5 |
-| `apk` | `alpine` | 5 |
+| `huggingface` | `hf`, `huggingface-cli` | 1 |
+| `apt` | — | 5 |
+| `apk` | — | 5 |
 | `brew` | `homebrew` | 1 |
 | `rustup` | — | 5 |
-| `cpan` | `perl` | 2 |
+| `cpan` | — | 2 |
 | `winget` | — | 1 |
 | `nvm` | — | 5 |
-| `clojure` | `clojars` | 1 |
-| `haskell` | `hackage` | 2 |
+| `clojure` | — | 1 |
 | `cabal` | — | 2 |
 | `stack` | — | 2 |
-| `cocoapods` | `cocoa`, `pod` | 1 |
+| `cocoapods` | `pod` | 1 |
 | `flathub` | `flatpak` | 1 |
 | `nix` | — | 3 |
-| `emacs` | `elpa` | 3 |
-| `tex` | `ctan`, `latex`, `texlive`, `miktex` | 3 |
+| `emacs` | — | 3 |
+| `tex` | — | 3 |
 
 ### 内置源明细
 
@@ -265,8 +264,6 @@ lm reset pip
 | `nvm` | `tencent` | https://mirrors.cloud.tencent.com/nodejs-release/ |
 | `nvm` | `huawei` | https://repo.huaweicloud.com/nodejs/ |
 | `clojure` | `tuna` | https://mirrors.tuna.tsinghua.edu.cn/clojars/ |
-| `haskell` | `tuna` | https://mirrors.tuna.tsinghua.edu.cn/hackage/ |
-| `haskell` | `ustc` | https://mirrors.ustc.edu.cn/hackage/ |
 | `cabal` | `tuna` | https://mirrors.tuna.tsinghua.edu.cn/hackage/ |
 | `cabal` | `ustc` | https://mirrors.ustc.edu.cn/hackage/ |
 | `stack` | `tuna` | https://mirrors.tuna.tsinghua.edu.cn/hackage/ |

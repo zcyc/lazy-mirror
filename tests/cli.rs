@@ -51,14 +51,28 @@ fn env_prints_shell_assignments_without_writing_a_file() {
 }
 
 #[test]
-fn chsrc_target_aliases_and_plan_are_available() {
+fn canonical_targets_and_real_aliases_are_available() {
     let output = Command::new(env!("CARGO_BIN_EXE_lm"))
-        .args(["list", "node", "--format", "json"])
+        .args(["list", "npm", "--format", "json"])
         .output()
         .unwrap();
     assert!(output.status.success());
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["target"], "npm");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["list", "node", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+
+    let output = Command::new(env!("CARGO_BIN_EXE_lm"))
+        .args(["list", "pip3", "--format", "json"])
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["target"], "pip");
 }
 
 #[test]
@@ -112,5 +126,5 @@ fn catalog_lint_is_machine_readable() {
     let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(value["schema"], "lm/v1");
     assert_eq!(value["valid"], true);
-    assert_eq!(value["targets"], 42);
+    assert_eq!(value["targets"], 41);
 }

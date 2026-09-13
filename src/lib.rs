@@ -32,7 +32,10 @@ pub mod uv;
 pub const JSON_SCHEMA: &str = "lm/v1";
 
 pub(crate) fn run(program: &str, args: &[&str]) -> io::Result<()> {
-    let output = Command::new(program).args(args).output()?;
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| command_error(program, error))?;
     if output.status.success() {
         Ok(())
     } else {
@@ -44,7 +47,10 @@ pub(crate) fn run(program: &str, args: &[&str]) -> io::Result<()> {
 }
 
 pub(crate) fn command_output(program: &str, args: &[&str]) -> io::Result<String> {
-    let output = Command::new(program).args(args).output()?;
+    let output = Command::new(program)
+        .args(args)
+        .output()
+        .map_err(|error| command_error(program, error))?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
         let message = if detail.is_empty() {
@@ -59,20 +65,65 @@ pub(crate) fn command_output(program: &str, args: &[&str]) -> io::Result<String>
 }
 
 pub(crate) fn command_version(program: &str) -> io::Result<String> {
-    Ok(command_output(program, &["--version"])?
-        .lines()
-        .next()
-        .unwrap_or_default()
-        .to_owned())
+    if program == "cpan" && !command_exists(program) {
+        return Err(command_not_found(program));
+    }
+    let output = if program == "cpan" {
+        command_output("perl", &["-MApp::Cpan", "-e", "print $App::Cpan::VERSION"])?
+    } else {
+        command_output(program, command_version_args(program))?
+    };
+    Ok(output.lines().next().unwrap_or_default().to_owned())
+}
+
+pub(crate) fn missing_commands(commands: &[&str]) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!(
+            "none of these commands is available: {}; install one and ensure it is in PATH",
+            commands.join(", ")
+        ),
+    )
+}
+
+fn command_error(program: &str, error: io::Error) -> io::Error {
+    if error.kind() == io::ErrorKind::NotFound {
+        command_not_found(program)
+    } else {
+        error
+    }
+}
+
+fn command_not_found(program: &str) -> io::Error {
+    io::Error::new(
+        io::ErrorKind::NotFound,
+        format!("command '{program}' was not found; install it or ensure it is in PATH"),
+    )
 }
 
 pub fn command_exists(program: &str) -> bool {
     Command::new(program)
-        .arg("--version")
+        .args(command_exists_args(program))
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
         .is_ok_and(|status| status.success())
+}
+
+fn command_version_args(program: &str) -> &'static [&'static str] {
+    // ponytail: keep the exceptional command syntax in one small lookup; add entries only when a command rejects --version.
+    match program {
+        "go" => &["version"],
+        _ => &["--version"],
+    }
+}
+
+fn command_exists_args(program: &str) -> &'static [&'static str] {
+    if program == "cpan" {
+        &["-h"]
+    } else {
+        command_version_args(program)
+    }
 }
 
 pub struct ToolStatus {
@@ -693,6 +744,26 @@ fn read_optional(path: &Path) -> io::Result<Option<String>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn commands_use_their_supported_version_arguments() {
+        assert_eq!(command_version_args("go"), &["version"]);
+        assert_eq!(command_version_args("cargo"), &["--version"]);
+        assert_eq!(command_exists_args("cpan"), &["-h"]);
+    }
+
+    #[test]
+    fn missing_commands_have_actionable_errors() {
+        let error = command_output("lm-command-does-not-exist", &[]).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::NotFound);
+        assert_eq!(
+            error.to_string(),
+            "command 'lm-command-does-not-exist' was not found; install it or ensure it is in PATH"
+        );
+        assert!(missing_commands(&["pip", "pip3"])
+            .to_string()
+            .contains("pip, pip3"));
+    }
 
     #[test]
     fn backed_up_files_are_restored() {

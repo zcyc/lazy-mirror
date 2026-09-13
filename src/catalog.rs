@@ -447,7 +447,7 @@ const WINGET: &[MirrorSpec] = &[MirrorSpec {
 const TARGETS: &[TargetSpec] = &[
     TargetSpec {
         name: "npm",
-        aliases: &["node", "nodejs"],
+        aliases: &[],
         mirrors: NODE,
     },
     TargetSpec {
@@ -472,7 +472,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "pip",
-        aliases: &["pip3", "python", "py", "pypi"],
+        aliases: &["pip3"],
         mirrors: PYPI,
     },
     TargetSpec {
@@ -492,12 +492,12 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "composer",
-        aliases: &["php"],
+        aliases: &[],
         mirrors: COMPOSER,
     },
     TargetSpec {
         name: "gem",
-        aliases: &["ruby"],
+        aliases: &[],
         mirrors: RUBYGEMS,
     },
     TargetSpec {
@@ -507,7 +507,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "maven",
-        aliases: &["java", "mvn", "maven-daemon", "mvnd"],
+        aliases: &["mvn"],
         mirrors: JAVA,
     },
     TargetSpec {
@@ -522,17 +522,17 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "cargo",
-        aliases: &["rust", "crate"],
+        aliases: &[],
         mirrors: CARGO,
     },
     TargetSpec {
         name: "docker",
-        aliases: &["dockerhub"],
+        aliases: &[],
         mirrors: DOCKER,
     },
     TargetSpec {
         name: "buildkit",
-        aliases: &["docker-buildkit", "buildx"],
+        aliases: &["buildx"],
         mirrors: DOCKER,
     },
     TargetSpec {
@@ -547,7 +547,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "conda",
-        aliases: &["mamba", "anaconda"],
+        aliases: &["mamba"],
         mirrors: CONDA,
     },
     TargetSpec {
@@ -557,7 +557,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "dart",
-        aliases: &["pub"],
+        aliases: &[],
         mirrors: DART,
     },
     TargetSpec {
@@ -572,17 +572,17 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "huggingface",
-        aliases: &["hf", "huggingface-hub"],
+        aliases: &["hf", "huggingface-cli"],
         mirrors: HUGGINGFACE,
     },
     TargetSpec {
         name: "apt",
-        aliases: &["debian", "ubuntu"],
+        aliases: &[],
         mirrors: APT,
     },
     TargetSpec {
         name: "apk",
-        aliases: &["alpine"],
+        aliases: &[],
         mirrors: APK,
     },
     TargetSpec {
@@ -597,7 +597,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "cpan",
-        aliases: &["perl"],
+        aliases: &[],
         mirrors: CPAN,
     },
     TargetSpec {
@@ -612,13 +612,8 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "clojure",
-        aliases: &["clojars"],
+        aliases: &[],
         mirrors: CLOJURE,
-    },
-    TargetSpec {
-        name: "haskell",
-        aliases: &["hackage"],
-        mirrors: HASKELL,
     },
     TargetSpec {
         name: "cabal",
@@ -632,7 +627,7 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "cocoapods",
-        aliases: &["cocoa", "pod"],
+        aliases: &["pod"],
         mirrors: COCOAPODS,
     },
     TargetSpec {
@@ -647,12 +642,12 @@ const TARGETS: &[TargetSpec] = &[
     },
     TargetSpec {
         name: "emacs",
-        aliases: &["elpa"],
+        aliases: &[],
         mirrors: EMACS,
     },
     TargetSpec {
         name: "tex",
-        aliases: &["ctan", "latex", "texlive", "miktex"],
+        aliases: &[],
         mirrors: TEX,
     },
 ];
@@ -727,7 +722,7 @@ pub fn probe_spec(target: &str) -> ProbeSpec {
             "/modules/02packages.details.txt.gz",
             ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
         ),
-        "haskell" | "hackage" | "cabal" | "stack" => (
+        "cabal" | "stack" => (
             "/01-index.tar.gz",
             ProbeResponse::BinaryPrefix(&[0x1f, 0x8b]),
         ),
